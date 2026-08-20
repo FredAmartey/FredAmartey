@@ -1,0 +1,29 @@
+name: contribution graph
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy
+      - name: render
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/render.py --user ${{ github.repository_owner }} --out dist
+      - name: commit
+        run: |
+          git config user.name "Fred Amartey"
+          git config user.email "43480311+FredAmartey@users.noreply.github.com"
+          git add dist
+          git diff --quiet --cached || git commit -m "update contribution graph"
+          git push

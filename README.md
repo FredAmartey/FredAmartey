@@ -1,7 +1,9 @@
-<p align="center">
-  <img src="assets/khazad-dum.gif" width="720" alt="Pixel art of Gandalf facing the Balrog on the Bridge of Khazad-dum" />
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="dist/khazad-graph-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="dist/khazad-graph-light.svg">
+  <img alt="A wizard walks a year of contributions, and turns to face what follows him" src="dist/khazad-graph-dark.svg" width="100%">
+</picture>
 
-<p align="center">Delightful interfaces and agent infrastructure around them</p>
+### Delightful interfaces and agent infrastructure around them
 
-<p align="center"><i>"Not all who wander are lost" - J.R.R Tolkien</i></p>
+*"Not all who wander are lost"* - J.R.R Tolkien

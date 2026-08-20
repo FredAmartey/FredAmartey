@@ -1,0 +1,4 @@
+dist/*.html
+scripts/sheet.png
+scripts/__pycache__/
+sprite-preview.png
