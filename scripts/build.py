@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build the profile banner: Gandalf holds the line against the Balrog.
+"""Build the profile banner: the standoff on the bridge of Khazad-dum.
 
-Characters are composed from Universal LPC Spritesheet layers (see CREDITS.md),
-recoloured, cut to their walk cycles, and written into one self-contained
-animated SVG. The PNG frames are embedded as base64 so nothing depends on
-external files surviving GitHub's image proxy.
+Two CC0/CC-BY pixel-art characters (see CREDITS.md) are recoloured — the wizard
+to grey, the demon down into shadow so only its fire reads — and staged either
+side of a stone span over a chasm. Nothing walks: the only motion is the two
+idle cycles, the firelight, and the embers.
 
-  python3 scripts/build.py --src <dir of downloaded lpc layers> --out .
+  python3 scripts/build.py --src <dir with the unpacked asset packs> --out .
 """
 import argparse
 import base64
@@ -16,202 +16,102 @@ import os
 import numpy as np
 from PIL import Image
 
-F = 64                 # lpc frame size
-ROW_WALK_RIGHT = 11    # ulpc row order: 8 up, 9 left, 10 down, 11 right
-NFRAMES = 9
+# ---------- colour ----------
 
-# ---------- layer helpers ----------
-
-def load(src, name):
-    return Image.open(os.path.join(src, name)).convert("RGBA")
-
-def tint(img, mul, add=(0, 0, 0), gamma=1.0):
-    """recolour a layer while keeping its shading"""
-    a = np.asarray(img).astype(np.float64)
-    lum = (a[:, :, :3].mean(axis=2, keepdims=True) / 255.0) ** gamma
-    a[:, :, :3] = np.clip(lum * np.array(mul) + np.array(add), 0, 255)
-    return Image.fromarray(a.astype(np.uint8), "RGBA")
-
-def drop_specks(img, min_size=44):
-    """Drop small detached blobs from a layer, per animation frame.
-
-    The large wizard hat carries a gold sparkle floating beside the brim. It is
-    its own little island of pixels, so removing components below a size floor
-    takes it out without touching the hat, which colour matching could not do
-    (the sparkle shares tones with the hat's own shading).
-    """
-    a = np.asarray(img).copy()
-    h, w = a.shape[:2]
-    for fy in range(0, h, F):
-        for fx in range(0, w, F):
-            cell = a[fy:fy + F, fx:fx + F]
-            solid = cell[:, :, 3] > 0
-            seen = np.zeros_like(solid)
-            for sy in range(F):
-                for sx in range(F):
-                    if not solid[sy, sx] or seen[sy, sx]:
-                        continue
-                    stack_, comp = [(sy, sx)], []
-                    seen[sy, sx] = True
-                    while stack_:
-                        cy, cx = stack_.pop()
-                        comp.append((cy, cx))
-                        for dy in (-1, 0, 1):
-                            for dx in (-1, 0, 1):
-                                ny, nx = cy + dy, cx + dx
-                                if (0 <= ny < F and 0 <= nx < F
-                                        and solid[ny, nx] and not seen[ny, nx]):
-                                    seen[ny, nx] = True
-                                    stack_.append((ny, nx))
-                    if len(comp) < min_size:
-                        for cy, cx in comp:
-                            cell[cy, cx, 3] = 0
-    return Image.fromarray(a, "RGBA")
-
-def stack(layers):
-    base = Image.new("RGBA", (832, 2944), (0, 0, 0, 0))
-    for layer in layers:
-        base.alpha_composite(layer)
-    return base
-
-GREY = ((120, 124, 136), (52, 54, 64))
-GREY_DARK = ((104, 108, 120), (40, 42, 50))
+def to_hsv(a):
+    rgb = a[:, :, :3].astype(np.float64) / 255.0
+    mx = rgb.max(axis=2)
+    d = mx - rgb.min(axis=2)
+    h = np.zeros_like(mx)
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    m = d > 1e-6
+    i = m & (mx == r); h[i] = ((g - b)[i] / d[i]) % 6
+    i = m & (mx == g); h[i] = ((b - r)[i] / d[i]) + 2
+    i = m & (mx == b); h[i] = ((r - g)[i] / d[i]) + 4
+    h *= 60.0
+    s = np.where(mx > 1e-6, d / np.maximum(mx, 1e-6), 0)
+    return h, s, mx
 
 
-def build_gandalf(src):
-    return stack([
-        tint(load(src, "cape_behind.png"), *GREY_DARK),
-        load(src, "staff_bg.png"),
-        load(src, "body_male_light.png"),
-        load(src, "head_elderly.png"),
-        tint(load(src, "robe_skirt.png"), *GREY),
-        tint(load(src, "robe_light.png"), *GREY),
-        tint(load(src, "cape_front.png"), *GREY_DARK),
-        tint(load(src, "boots_gray.png"), (96, 100, 112), (30, 30, 38)),
-        load(src, "beard_white.png"),
-        tint(drop_specks(load(src, "hat_large.png")), (112, 116, 128), (44, 46, 56)),
-        load(src, "staff_fg.png"),
-    ])
-
-
-def build_balrog(src):
-    body = stack([
-        load(src, "wings_bat_bg.png"),
-        load(src, "body_musc_pure_black.png"),
-        load(src, "head_minotaur.png"),
-    ])
-    # a balrog is a shadow: keep the form almost black, let the fire do the talking
-    body = tint(body, (52, 20, 12), (6, 2, 1), gamma=1.3)
-    body.alpha_composite(tint(load(src, "horns_bone.png"), (228, 212, 180)))
-    return body
-
-
-# ---------- fire ----------
-# drawn at the same pixel scale as the sprites so it sits in the same grid
-
-FIRE = [(143, 32, 5), (211, 58, 8), (255, 139, 31), (255, 199, 74), (255, 240, 190)]
-
-def _put(px, x, y, color, w=F, h=F):
-    if 0 <= x < w and 0 <= y < h:
-        px[y, x] = (*color, 255)
-
-def tongue(px, cx, base, height, width, lean, hot=0.0):
-    """one lick of flame rising from (cx, base)"""
-    steps = max(1, int(height))
-    for i in range(steps):
-        t = i / steps                       # 0 at the base, 1 at the tip
-        y = int(base - i)
-        half = max(0.0, (width / 2) * (1.0 - t ** 1.35))
-        x0 = cx + lean * (t ** 1.6)
-        for dx in range(-int(half) - 1, int(half) + 2):
-            d = abs(dx) / (half + 0.001)
-            if d > 1.0:
-                continue
-            # bright core, cooler edges, cooler toward the tip
-            level = (1.0 - d * 0.55) * (1.0 - t * 0.5) + hot
-            idx = int(np.clip(level * (len(FIRE) - 1), 0, len(FIRE) - 1))
-            _put(px, int(round(x0 + dx)), y, FIRE[idx])
-
-def mane(frame, n=9):
-    """the fire that rides on the balrog's shoulders, behind the body"""
-    img = Image.new("RGBA", (F, F), (0, 0, 0, 0))
-    px = np.asarray(img).copy()
-    phase = 2 * np.pi * frame / n
-    # tips have to clear the head and horns, so these run tall
-    spec = [(13, 34, 20, 8), (19, 31, 27, 9), (26, 29, 32, 10),
-            (33, 28, 30, 10), (40, 30, 24, 9), (45, 34, 17, 7)]
-    for k, (cx, base, h, w) in enumerate(spec):
-        wob = np.sin(phase + k * 1.7)
-        tongue(px, cx, base, h + wob * 2.5, w, lean=wob * 3.0 - 1.0)
-    for k, (cx, base, h, w) in enumerate([(22, 32, 22, 5), (30, 30, 26, 5), (37, 31, 20, 5)]):
-        wob = np.sin(phase + 0.9 + k * 2.3)
-        tongue(px, cx, base, h + wob * 2.0, w, lean=wob * 2.2, hot=0.2)
-    return Image.fromarray(px, "RGBA")
-
-def embers(frame, n=9):
-    """eyes, lava seams and sparks, drawn over the body"""
-    img = Image.new("RGBA", (F, F), (0, 0, 0, 0))
-    px = np.asarray(img).copy()
-    phase = 2 * np.pi * frame / n
-    glow = 0.5 + 0.5 * np.sin(phase * 2)
-
-    eye = FIRE[4] if glow > 0.55 else FIRE[3]
-    for x, y in ((33, 23), (37, 22)):
-        _put(px, x, y, eye)
-        _put(px, x + 1, y, eye)
-        _put(px, x, y + 1, FIRE[2])
-
-    # scattered embers in the hide, never joined into a line
-    seams = [(25, 37), (27, 41), (24, 45), (30, 39), (31, 44), (28, 48)]
-    for i, (x, y) in enumerate(seams):
-        if (i + frame) % 3:
-            _put(px, x, y, FIRE[2 + ((i + frame) % 2)])
-
-    # fire licking up the near side of the body
-    for k, (cx, base, h) in enumerate([(23, 46, 9), (28, 49, 7)]):
-        wob = np.sin(phase + k * 2.0)
-        tongue(px, cx, base, h + wob * 1.5, 4, lean=wob * 1.5)
-
-    for k in range(3):
-        p = ((frame / n) + k / 3.0) % 1.0
-        sx = int(18 + k * 9 + np.sin(phase + k) * 2)
-        sy = int(24 - p * 18)
-        if p < 0.85:
-            _put(px, sx, sy, FIRE[3 if k % 2 else 2])
-    return Image.fromarray(px, "RGBA")
-
-def with_fire(frames):
-    out = []
-    n = len(frames)
-    for i, fr in enumerate(frames):
-        canvas = mane(i, n)
-        canvas.alpha_composite(fr)
-        canvas.alpha_composite(embers(i, n))
-        out.append(canvas)
+def from_hsv(h, s, v, alpha):
+    c = v * s
+    x = c * (1 - np.abs((h / 60.0) % 2 - 1))
+    m = v - c
+    z = np.zeros_like(h)
+    cond = [(h < 60), (h < 120), (h < 180), (h < 240), (h < 300), (h >= 300)]
+    r = np.select(cond, [c, x, z, z, x, c])
+    g = np.select(cond, [x, c, c, x, z, z])
+    b = np.select(cond, [z, z, x, c, c, x])
+    out = np.zeros(h.shape + (4,), dtype=np.uint8)
+    out[:, :, 0] = np.clip((r + m) * 255, 0, 255)
+    out[:, :, 1] = np.clip((g + m) * 255, 0, 255)
+    out[:, :, 2] = np.clip((b + m) * 255, 0, 255)
+    out[:, :, 3] = alpha
     return out
 
 
-# ---------- frame extraction ----------
+def grey_wizard(img):
+    """purple robe and gold trim -> Gandalf's grey, leaving skin and beard"""
+    a = np.asarray(img).astype(np.uint8)
+    h, s, v = to_hsv(a)
+    robe = (s > 0.15) & (((h >= 245) & (h <= 340)) | ((h >= 200) & (h < 245) & (s > 0.25)))
+    trim = (s > 0.32) & (h >= 38) & (h <= 65)
+    sel = robe | trim
+    h2, s2, v2 = h.copy(), s.copy(), v.copy()
+    s2[sel] = 0.06
+    h2[sel] = 225.0
+    v2[sel] = np.clip(v[sel] * 0.60 + 0.05, 0, 1)
+    return Image.fromarray(from_hsv(h2, s2, v2, a[:, :, 3]), "RGBA")
 
-def walk_frames(sheet, row=ROW_WALK_RIGHT, n=NFRAMES):
-    return [sheet.crop((i * F, row * F, (i + 1) * F, (row + 1) * F)) for i in range(n)]
 
-def content_box(frames):
-    """one shared bbox across the cycle so frames stay registered"""
-    x0, y0, x1, y1 = 1e9, 1e9, -1, -1
-    for fr in frames:
-        bb = fr.getbbox()
+def shadow_demon(img):
+    """drop the body into shadow and leave the flame and eyes burning"""
+    a = np.asarray(img).astype(np.uint8)
+    h, s, v = to_hsv(a)
+    fire = ((h >= 35) & (h <= 70) & (v > 0.62)) | ((h <= 30) & (v > 0.85) & (s > 0.6))
+    body = ~fire
+    h2, s2, v2 = h.copy(), s.copy(), v.copy()
+    v2[body] = v[body] * 0.46
+    s2[body] = np.clip(s[body] * 0.82, 0, 1)
+    return Image.fromarray(from_hsv(h2, s2, v2, a[:, :, 3]), "RGBA")
+
+
+# ---------- frames ----------
+
+def wizard_idle(src):
+    sheet = Image.open(os.path.join(src, "wizard", "Wizard Pack", "Idle.png")).convert("RGBA")
+    fw = 231
+    return [sheet.crop((i * fw, 0, (i + 1) * fw, sheet.height)) for i in range(sheet.width // fw)]
+
+
+def demon_idle(src):
+    base = os.path.join(src, "demon", "boss_demon_slime_FREE_v1.0",
+                        "individual sprites", "01_demon_idle")
+    names = sorted(os.listdir(base),
+                   key=lambda n: int("".join(c for c in n if c.isdigit()) or 0))
+    return [Image.open(os.path.join(base, n)).convert("RGBA")
+            for n in names if n.endswith(".png")]
+
+
+def shared_crop(frames, pad=1):
+    """one bbox across a cycle so the sprite does not jitter"""
+    x0 = y0 = 10 ** 6
+    x1 = y1 = -1
+    for f in frames:
+        bb = f.getbbox()
         if not bb:
             continue
         x0, y0 = min(x0, bb[0]), min(y0, bb[1])
         x1, y1 = max(x1, bb[2]), max(y1, bb[3])
-    return int(x0), int(y0), int(x1), int(y1)
-
-def crop_all(frames, pad=1):
-    x0, y0, x1, y1 = content_box(frames)
     x0, y0 = max(0, x0 - pad), max(0, y0 - pad)
-    x1, y1 = min(F, x1 + pad), min(F, y1 + pad)
-    return [fr.crop((x0, y0, x1, y1)) for fr in frames], (x1 - x0, y1 - y0)
+    x1 = min(frames[0].width, x1 + pad)
+    y1 = min(frames[0].height, y1 + pad)
+    return [f.crop((x0, y0, x1, y1)) for f in frames], (x1 - x0, y1 - y0)
+
+
+def mirror(frames):
+    return [f.transpose(Image.FLIP_LEFT_RIGHT) for f in frames]
+
 
 def data_uri(img):
     buf = io.BytesIO()
@@ -221,156 +121,167 @@ def data_uri(img):
 
 # ---------- scene ----------
 
-W, H = 880, 150
-DUR = 24.0
-WALK = 0.62               # seconds per 9-frame cycle
-GS, BS = 1.9, 2.5         # character scales: the balrog towers
+W, H = 900, 300
+GROUND = 258          # top of the bridge deck
+G_SCALE = 1.75        # gandalf
+B_SCALE = 2.35        # the balrog towers over him
 
-T_TURN = 0.42             # gandalf plants himself and turns
-T_FLASH = 0.455
-T_BREAK = 0.48            # the balrog breaks
-T_RESUME = 0.60
-T_GONE = 0.88
 
-def kt(*v):
-    return ";".join(f"{x:g}" for x in v)
-
-def cycle(uris, w, h, dur):
-    """the walk cycle: one frame visible at a time"""
-    out = []
+def cycle(uris, w, h, dur, x, y):
+    """an idle loop: one frame visible at a time"""
     n = len(uris)
-    keytimes = kt(*[i / n for i in range(n)], 1)
+    keytimes = ";".join(f"{i / n:g}" for i in range(n)) + ";1"
+    out = []
     for i, uri in enumerate(uris):
         vals = ";".join("1" if k == i else "0" for k in range(n)) + (";1" if i == 0 else ";0")
         out.append(
-            f'<image href="{uri}" width="{w:g}" height="{h:g}" image-rendering="pixelated" '
-            f'opacity="{1 if i == 0 else 0}">'
+            f'<image href="{uri}" x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" '
+            f'image-rendering="pixelated" opacity="{1 if i == 0 else 0}">'
             f'<animate attributeName="opacity" values="{vals}" keyTimes="{keytimes}" '
             f'dur="{dur}s" repeatCount="indefinite" calcMode="discrete"/></image>'
         )
     return "".join(out)
 
 
+def embers(seed=7):
+    """sparks drifting up out of the chasm"""
+    rng = np.random.default_rng(seed)
+    out = []
+    for i in range(26):
+        x = float(rng.uniform(40, W - 40))
+        drift = float(rng.uniform(-14, 14))
+        dur = float(rng.uniform(4.5, 9.0))
+        delay = float(rng.uniform(0, 9.0))
+        r = float(rng.uniform(0.8, 1.8))
+        rise = float(rng.uniform(120, 210))
+        col = ["#ff9a3c", "#ffbf5e", "#f2662a"][i % 3]
+        out.append(
+            f'<circle cx="{x:g}" cy="{H - 6:g}" r="{r:g}" fill="{col}" opacity="0">'
+            f'<animate attributeName="opacity" values="0;0.9;0.7;0" keyTimes="0;0.15;0.6;1" '
+            f'dur="{dur:g}s" begin="-{delay:g}s" repeatCount="indefinite"/>'
+            f'<animateTransform attributeName="transform" type="translate" '
+            f'values="0 0;{drift:g} -{rise:g}" dur="{dur:g}s" begin="-{delay:g}s" '
+            f'repeatCount="indefinite"/></circle>'
+        )
+    return "".join(out)
+
+
 def build_svg(g_uris, g_size, b_uris, b_size):
-    gw, gh = g_size[0] * GS, g_size[1] * GS
-    bw, bh = b_size[0] * BS, b_size[1] * BS
-    ground = H - 22
-    g_y, b_y = ground - gh, ground - bh
+    gw, gh = g_size[0] * G_SCALE, g_size[1] * G_SCALE
+    bw, bh = b_size[0] * B_SCALE, b_size[1] * B_SCALE
+    gx, gy = W * 0.30 - gw / 2, GROUND - gh + 2
+    bx, by = W * 0.68 - bw / 2, GROUND - bh + 4
 
-    g_stand = W * 0.60
-    b_stand = g_stand - bw + 10
-    b_break = b_stand - 30
+    defs = f"""<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#07070d"/>
+    <stop offset="0.55" stop-color="#0d0a12"/>
+    <stop offset="1" stop-color="#1a0e10"/>
+  </linearGradient>
+  <linearGradient id="chasm" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ff7a1e" stop-opacity="0"/>
+    <stop offset="0.6" stop-color="#ff6a14" stop-opacity="0.22"/>
+    <stop offset="1" stop-color="#ffa63a" stop-opacity="0.40"/>
+  </linearGradient>
+  <radialGradient id="firelight" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#ff8a2b" stop-opacity="0.42"/>
+    <stop offset="1" stop-color="#ff8a2b" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="staffglow" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#cbeaff" stop-opacity="0.75"/>
+    <stop offset="1" stop-color="#7fc4ef" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="deck" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#23242e"/>
+    <stop offset="0.62" stop-color="#2b2630"/>
+    <stop offset="1" stop-color="#3a2a26"/>
+  </linearGradient>
+  <linearGradient id="vign" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#07070d" stop-opacity="0.85"/>
+    <stop offset="0.16" stop-color="#07070d" stop-opacity="0"/>
+    <stop offset="0.84" stop-color="#07070d" stop-opacity="0"/>
+    <stop offset="1" stop-color="#07070d" stop-opacity="0.85"/>
+  </linearGradient>
+</defs>"""
 
-    # movement
-    walk_g = (f'<animateTransform attributeName="transform" type="translate" '
-              f'values="{-gw - 30} {g_y};{g_stand} {g_y};{g_stand} {g_y};{W + gw} {g_y}" '
-              f'keyTimes="{kt(0, T_TURN, T_RESUME, 1)}" dur="{DUR}s" repeatCount="indefinite" '
-              f'calcMode="linear"/>')
-    walk_b = (f'<animateTransform attributeName="transform" type="translate" '
-              f'values="{-bw - 190} {b_y};{b_stand} {b_y};{b_stand} {b_y};{b_break} {b_y};'
-              f'{b_break + 8} {b_y};{-bw - 240} {b_y};{-bw - 240} {b_y}" '
-              f'keyTimes="{kt(0, T_TURN, T_FLASH, T_BREAK, T_RESUME, T_GONE, 1)}" dur="{DUR}s" '
-              f'repeatCount="indefinite" calcMode="linear"/>')
-
-    # facing. sprites are drawn facing right, so flip about their own width.
-    def flip(times, scales, w):
-        t = (f'<animateTransform attributeName="transform" type="translate" '
-             f'values="{";".join(f"{w if s < 0 else 0:g} 0" for s in scales)}" '
-             f'keyTimes="{kt(*times)}" dur="{DUR}s" repeatCount="indefinite" '
-             f'calcMode="discrete" additive="sum"/>')
-        s = (f'<animateTransform attributeName="transform" type="scale" '
-             f'values="{";".join(f"{s:g} 1" for s in scales)}" keyTimes="{kt(*times)}" '
-             f'dur="{DUR}s" repeatCount="indefinite" calcMode="discrete" additive="sum"/>')
-        return t + s
-
-    flip_g = flip([0, T_TURN, T_RESUME], [1, -1, 1], gw)
-    flip_b = flip([0, T_BREAK], [1, -1], bw)
-
-    # walking vs standing: the legs stop while they face off
-    hold_walk = (f'<animate attributeName="opacity" values="1;0;1;1" '
-                 f'keyTimes="{kt(0, T_TURN, T_RESUME, 1)}" dur="{DUR}s" '
-                 f'repeatCount="indefinite" calcMode="discrete"/>')
-    hold_stand = (f'<animate attributeName="opacity" values="0;1;0;0" '
-                  f'keyTimes="{kt(0, T_TURN, T_RESUME, 1)}" dur="{DUR}s" '
-                  f'repeatCount="indefinite" calcMode="discrete"/>')
-    b_hold_walk = (f'<animate attributeName="opacity" values="1;0;1;1" '
-                   f'keyTimes="{kt(0, T_TURN, T_BREAK, 1)}" dur="{DUR}s" '
-                   f'repeatCount="indefinite" calcMode="discrete"/>')
-    b_hold_stand = (f'<animate attributeName="opacity" values="0;1;0;0" '
-                    f'keyTimes="{kt(0, T_TURN, T_BREAK, 1)}" dur="{DUR}s" '
-                    f'repeatCount="indefinite" calcMode="discrete"/>')
-
-    def stand_frame(uri, w, h):
-        return (f'<image href="{uri}" width="{w:g}" height="{h:g}" image-rendering="pixelated"/>')
-
-    # the staff head, in scaled sprite space, for the flare
-    ox, oy = gw * 0.80, gh * 0.20
-
-    flare = (
-        f'<circle cx="{ox:g}" cy="{oy:g}" r="{gw * 0.16:g}" fill="#e0f2fe" opacity="0">'
-        f'<animate attributeName="opacity" values="0;0;1;0;0" '
-        f'keyTimes="{kt(0, T_FLASH - 0.012, T_FLASH, T_FLASH + 0.045, 1)}" dur="{DUR}s" '
-        f'repeatCount="indefinite"/></circle>'
-        f'<circle cx="{ox:g}" cy="{oy:g}" r="{gw * 0.07:g}" fill="#bae6fd" opacity="0.5">'
-        f'<animate attributeName="opacity" values="0.35;0.65;0.35" dur="1.8s" '
-        f'repeatCount="indefinite"/></circle>'
+    pillars = "".join(
+        f'<rect x="{x}" y="0" width="{w}" height="{GROUND - 6}" fill="#101018" opacity="{op}"/>'
+        for x, w, op in [(70, 26, 0.55), (196, 18, 0.4), (410, 22, 0.45),
+                         (600, 16, 0.35), (790, 28, 0.5)]
     )
-    ring = (
-        f'<circle cx="{ox:g}" cy="{oy:g}" r="8" fill="none" stroke="#93c5fd" stroke-width="3" '
-        f'opacity="0">'
-        f'<animate attributeName="r" values="8;8;150;150" '
-        f'keyTimes="{kt(0, T_FLASH, T_FLASH + 0.055, 1)}" dur="{DUR}s" repeatCount="indefinite"/>'
-        f'<animate attributeName="stroke-width" values="4;4;0.6;0.6" '
-        f'keyTimes="{kt(0, T_FLASH, T_FLASH + 0.055, 1)}" dur="{DUR}s" repeatCount="indefinite"/>'
-        f'<animate attributeName="opacity" values="0;0;0.95;0;0" '
-        f'keyTimes="{kt(0, T_FLASH - 0.004, T_FLASH, T_FLASH + 0.055, 1)}" dur="{DUR}s" '
-        f'repeatCount="indefinite"/></circle>'
+    # a suggestion of arches behind the pillars
+    arches = "".join(
+        f'<path d="M{x} {GROUND - 6} L{x} {y} Q{x + w / 2} {y - 34} {x + w} {y} L{x + w} {GROUND - 6} Z" '
+        f'fill="#0c0c14" opacity="0.75"/>'
+        for x, w, y in [(40, 120, 120), (320, 150, 96), (620, 140, 110)]
     )
 
-    gandalf = (
-        f'<g>{walk_g}<g>{flip_g}'
-        f'<ellipse cx="{gw/2:g}" cy="{gh - 2:g}" rx="{gw*0.22:g}" ry="3.5" fill="#000" opacity="0.28"/>'
-        f'<g opacity="1">{hold_walk}{cycle(g_uris, gw, gh, WALK)}</g>'
-        f'<g opacity="0">{hold_stand}{stand_frame(g_uris[0], gw, gh)}</g>'
-        f'{flare}{ring}</g></g>'
+    scene = f"""
+  <rect width="{W}" height="{H}" fill="url(#sky)"/>
+  {arches}{pillars}
+  <rect x="0" y="{GROUND}" width="{W}" height="{H - GROUND}" fill="url(#chasm)"/>
+  <ellipse cx="{bx + bw * 0.5:g}" cy="{GROUND - 40:g}" rx="300" ry="150" fill="url(#firelight)">
+    <animate attributeName="opacity" values="0.85;1;0.9;1;0.85" dur="4.3s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse cx="{W * 0.5:g}" cy="{H:g}" rx="{W * 0.55:g}" ry="70" fill="url(#firelight)">
+    <animate attributeName="opacity" values="1;0.8;1" dur="6.1s" repeatCount="indefinite"/>
+  </ellipse>
+"""
+
+    bridge = f"""
+  <path d="M0 {GROUND + 14} L{W} {GROUND + 14} L{W} {GROUND} Q{W / 2} {GROUND - 10} 0 {GROUND} Z"
+        fill="url(#deck)"/>
+  <path d="M0 {GROUND} Q{W / 2} {GROUND - 10} {W} {GROUND}" fill="none"
+        stroke="#4b4a58" stroke-width="1.6" opacity="0.85"/>
+  <path d="M0 {GROUND + 14} Q{W / 2} {GROUND + 30} {W} {GROUND + 14} L{W} {GROUND + 40}
+           Q{W / 2} {GROUND + 20} 0 {GROUND + 40} Z" fill="#0b0a11" opacity="0.9"/>
+"""
+
+    staff_x = gx + gw * (0.10 if True else 0)
+    glow = (
+        f'<ellipse cx="{gx + gw * 0.09:g}" cy="{gy + gh * 0.10:g}" rx="46" ry="42" '
+        f'fill="url(#staffglow)" opacity="0.5">'
+        f'<animate attributeName="opacity" values="0.4;0.62;0.4" dur="3.7s" '
+        f'repeatCount="indefinite"/></ellipse>'
     )
-    balrog = (
-        f'<g>{walk_b}<g>{flip_b}'
-        f'<ellipse cx="{bw/2:g}" cy="{bh - 3:g}" rx="{bw*0.24:g}" ry="4" fill="#000" opacity="0.3"/>'
-        f'<g opacity="1">{b_hold_walk}{cycle(b_uris, bw, bh, WALK * 0.92)}</g>'
-        f'<g opacity="0">{b_hold_stand}{stand_frame(b_uris[0], bw, bh)}</g>'
-        f'</g></g>'
+
+    shadows = (
+        f'<ellipse cx="{gx + gw / 2:g}" cy="{GROUND + 3:g}" rx="{gw * 0.26:g}" ry="4" '
+        f'fill="#000" opacity="0.45"/>'
+        f'<ellipse cx="{bx + bw / 2:g}" cy="{GROUND + 5:g}" rx="{bw * 0.28:g}" ry="6" '
+        f'fill="#000" opacity="0.5"/>'
     )
 
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">'
-        f'<title>Gandalf holds the line against the Balrog</title>'
-        f'{balrog}{gandalf}'
+        f'<title>The bridge of Khazad-dum: a grey wizard stands against a demon of shadow and flame</title>'
+        f'{defs}{scene}{bridge}{shadows}{glow}'
+        f'{cycle(b_uris, bw, bh, 0.95, bx, by)}'
+        f'{cycle(g_uris, gw, gh, 1.15, gx, gy)}'
+        f'{embers()}'
+        f'<rect width="{W}" height="{H}" fill="url(#vign)"/>'
         f'</svg>'
     )
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", required=True, help="directory of downloaded LPC layers")
+    ap.add_argument("--src", required=True)
     ap.add_argument("--out", default=".")
     args = ap.parse_args()
 
-    g_sheet = build_gandalf(args.src)
-    b_sheet = build_balrog(args.src)
+    g_frames, g_size = shared_crop([grey_wizard(f) for f in wizard_idle(args.src)])
+    # the demon ships facing right; turn it to face the wizard
+    d_frames, d_size = shared_crop([shadow_demon(f) for f in demon_idle(args.src)])
+    d_frames = mirror(d_frames)
 
-    g_frames, g_size = crop_all(walk_frames(g_sheet))
-    b_frames, b_size = crop_all(with_fire(walk_frames(b_sheet)))
-
-    g_uris = [data_uri(f) for f in g_frames]
-    b_uris = [data_uri(f) for f in b_frames]
-
-    svg = build_svg(g_uris, g_size, b_uris, b_size)
+    svg = build_svg([data_uri(f) for f in g_frames], g_size,
+                    [data_uri(f) for f in d_frames], d_size)
     path = os.path.join(args.out, "banner.svg")
     with open(path, "w") as f:
         f.write(svg)
     print(f"wrote {path} ({os.path.getsize(path) // 1024} KB) "
-          f"gandalf {g_size} balrog {b_size}")
+          f"gandalf {g_size} balrog {d_size}")
 
 
 if __name__ == "__main__":

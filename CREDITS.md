@@ -1,28 +1,25 @@
 # Credits
 
-The two characters in [`banner.svg`](banner.svg) are built from layers of the
-[Universal LPC Spritesheet Character Generator](https://github.com/sanderfrenken/Universal-LPC-Spritesheet-Character-Generator),
-recoloured and composited by [`scripts/build.py`](scripts/build.py). The
-Balrog's fire is drawn by that script.
+The characters in [`banner.svg`](banner.svg) are pixel art by two artists,
+recoloured and staged by [`scripts/build.py`](scripts/build.py). The wizard's
+robe is shifted from purple to grey; the demon's body is dropped into shadow so
+only its fire still reads.
 
-Layers used, with their authors and licenses:
+- **Wizard Pack** by [LuizMelo](https://luizmelo.itch.io/wizard-pack) — CC0.
+  Credit is not required, but the work deserves it.
+- **Boss: Demon Slime** by [chierit](https://chierit.itch.io/boss-demon-slime) —
+  **CC-BY 4.0**, which requires this attribution. The free version's demon-form
+  idle cycle is the one used here.
 
-- **Body color** — bluecarrot16, Benjamin K. Smith (BenCreating), Evert, Eliza Wyatt (ElizaWy), TheraHedwig, MuffinElZangano, Durrani, Pierre Vigier (pvigier), Matthew Krohn (makrohn), Johannes Sjölund (wulax), Stephen Challener (Redshrike) — CC-BY-SA 3.0, OGA-BY 3.0, GPL 3.0 — https://opengameart.org/content/liberated-pixel-cup-lpc-base-assets-sprites-map-tiles
-- **Human male elderly (head)** — Benjamin K. Smith (BenCreating), Eliza Wyatt (ElizaWy), Stephen Challener (Redshrike) — OGA-BY 3.0, CC-BY 3.0 — https://opengameart.org/content/liberated-pixel-cup-lpc-base-assets-sprites-map-tiles
-- **Winter Beard** — bluecarrot16 — CC0 — https://opengameart.org/content/lpc-santa
-- **Misc Magic Hats** — Michael Whitlock (bigbeargames), Tracy — OGA-BY 3.0 — https://opengameart.org/content/lpc-celestial-wizard-hats
-- **Misc Magic Hats** — Stafford McIntyre, PlatForge project, Evert — CC-BY-SA 3.0 — https://opengameart.org/content/wizard-2
-- **Robe** — Luke Mehl — CC-BY-SA 3.0, GPL 3.0 — https://opengameart.org/content/female-mage-clothing-set
-- **Plain skirt** — bluecarrot16, Pierre Vigier (pvigier), Johannes Sjölund (wulax) — OGA-BY 3.0, CC-BY-SA 3.0, GPL 3.0 — https://opengameart.org/content/lpc-medieval-fantasy-character-sprites
-- **Solid cape** — bluecarrot16, Nila122, JaidynReiman — OGA-BY 3.0, CC-BY-SA 3.0, GPL 3.0 — https://opengameart.org/content/lpc-curly-hair-elven-ears-white-cape-with-blue-trim-and-more
-- **Boots** — bluecarrot16, Nila122 — OGA-BY 3.0, CC-BY-SA 3.0, GPL 2.0, GPL 3.0 — https://opengameart.org/content/lpc-clothes-and-hair
-- **Gnarled staff** — bluecarrot16 — OGA-BY 3.0+, GPL 3.0, CC-BY 4.0 — https://opengameart.org/content/lpc-more-weapons
-- **Minotaur (head)** — Evert, Nila122, Daniel Eddeland (daneeklu) — CC-BY-SA 3.0, GPL 3.0 — https://opengameart.org/content/lpc-style-farm-animals
-- **Curled Horns** — Nila122 — OGA-BY 3.0, GPL 3.0 — https://opengameart.org/content/lpc-lizard-headgear
-- **Bat Wings** — ElizaWy, JaidynReiman — OGA-BY 3.0 — https://opengameart.org/content/lpc-revised-ulpc-wings
+The bridge, chasm, firelight and embers are drawn in SVG by the build script.
 
-The composite is shared under **CC-BY-SA 3.0**, the most restrictive of the
-licenses above.
+To rebuild, download both packs from the links above, unpack them so the tree
+looks like `<src>/wizard/Wizard Pack/…` and
+`<src>/demon/boss_demon_slime_FREE_v1.0/…`, then run:
+
+```sh
+python3 scripts/build.py --src <src> --out .
+```
 
 Gandalf and the Balrog are creations of J.R.R. Tolkien. This is a fan tribute,
 not an official or licensed depiction.
