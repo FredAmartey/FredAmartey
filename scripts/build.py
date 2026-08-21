@@ -177,7 +177,7 @@ def build_svg(g_uri, g_w, b_uri, b_w):
         f'<image href="{b_uri}" x="{bx:g}" y="{by:g}" width="{b_w:g}" height="{B_H}" '
         f'image-rendering="pixelated"/>'
         # the staff carries its own light in the art; this only spills it onto the dark
-        f'<ellipse cx="{gx + g_w * 0.17:g}" cy="{gy + G_H * 0.13:g}" rx="34" ry="32" '
+        f'<ellipse cx="{gx + g_w * 0.85:g}" cy="{gy + G_H * 0.07:g}" rx="34" ry="32" '
         f'fill="url(#staffglow)" opacity="0.34">'
         f'<animate attributeName="opacity" values="0.26;0.42;0.3;0.4;0.26" dur="4.1s" '
         f'repeatCount="indefinite"/></ellipse>'
@@ -206,7 +206,7 @@ def main():
     g = quantize(fit_height(trim(Image.open(args.gandalf).convert("RGBA")), G_H * k), args.colors)
     b = quantize(fit_height(trim(Image.open(args.balrog).convert("RGBA")), B_H * k), args.colors)
 
-    # gandalf ships facing left; turn him to face the balrog
+    # the art has him facing left; turn him to face the balrog
     g = g.transpose(Image.FLIP_LEFT_RIGHT)
 
     svg = build_svg(data_uri(g), g.width / k, data_uri(b), b.width / k)
