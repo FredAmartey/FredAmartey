@@ -31,6 +31,29 @@ def trim(img):
     return img.crop(bb) if bb else img
 
 
+def ground_row(img, thresh=0.01):
+    """The row the figure actually stands on.
+
+    A cutout's bounding box is not its feet: these pieces carry a fringe of
+    near-transparent pixels (Gandalf's runs 64 rows deep), and the very lowest
+    solid pixel can be a tail or a claw tip rather than the stance. So take the
+    lowest row carrying a real footprint, and stand the figure on that. Aligning
+    to the bounding box instead leaves them hovering above the bridge.
+    """
+    a = np.asarray(img)
+    solid = (a[:, :, 3] > 200).sum(axis=1)
+    need = max(2, int(thresh * img.width))
+    rows = np.nonzero(solid >= need)[0]
+    return int(rows.max()) + 1 if len(rows) else img.height
+
+
+def place(img, stand_h, cx):
+    """Scale so the foot plane lands on the deck; return the SVG box."""
+    scale = stand_h / ground_row(img)
+    w, h = img.width * scale, img.height * scale
+    return w, h, cx - w / 2, DECK - stand_h
+
+
 def fit_height(img, h):
     w = max(1, round(img.width * h / img.height))
     return img.resize((w, round(h)), Image.LANCZOS)
@@ -151,9 +174,9 @@ def bridge():
 """
 
 
-def build_svg(g_uri, g_w, b_uri, b_w, STAFF_X=0.15):
-    gx, gy = G_CX - g_w / 2, DECK - G_H + 4
-    bx, by = B_CX - b_w / 2, DECK - B_H + 10
+def build_svg(g_uri, g_box, b_uri, b_box, STAFF_X=0.15):
+    g_w, g_h, gx, gy = g_box
+    b_w, b_h, bx, by = b_box
 
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">'
@@ -171,17 +194,17 @@ def build_svg(g_uri, g_w, b_uri, b_w, STAFF_X=0.15):
         f'</ellipse>'
         f'{bridge()}'
         # shadows they cast on the deck
-        f'<ellipse cx="{G_CX}" cy="{DECK + 6}" rx="{g_w * 0.30:g}" ry="6" fill="#000" opacity="0.5"/>'
-        f'<ellipse cx="{B_CX}" cy="{DECK + 10}" rx="{b_w * 0.26:g}" ry="10" fill="#000" opacity="0.55"/>'
+        f'<ellipse cx="{G_CX}" cy="{DECK + 4}" rx="{g_w * 0.24:g}" ry="5" fill="#000" opacity="0.5"/>'
+        f'<ellipse cx="{B_CX}" cy="{DECK + 7}" rx="{b_w * 0.24:g}" ry="9" fill="#000" opacity="0.55"/>'
         # the balrog, then gandalf in front of the light
-        f'<image href="{b_uri}" x="{bx:g}" y="{by:g}" width="{b_w:g}" height="{B_H}" '
+        f'<image href="{b_uri}" x="{bx:g}" y="{by:g}" width="{b_w:g}" height="{b_h:g}" '
         f'image-rendering="pixelated"/>'
         # the staff carries its own light in the art; this only spills it onto the dark
-        f'<ellipse cx="{gx + g_w * STAFF_X:g}" cy="{gy + G_H * 0.07:g}" rx="34" ry="32" '
+        f'<ellipse cx="{gx + g_w * STAFF_X:g}" cy="{gy + g_h * 0.07:g}" rx="34" ry="32" '
         f'fill="url(#staffglow)" opacity="0.34">'
         f'<animate attributeName="opacity" values="0.26;0.42;0.3;0.4;0.26" dur="4.1s" '
         f'repeatCount="indefinite"/></ellipse>'
-        f'<image href="{g_uri}" x="{gx:g}" y="{gy:g}" width="{g_w:g}" height="{G_H}" '
+        f'<image href="{g_uri}" x="{gx:g}" y="{gy:g}" width="{g_w:g}" height="{g_h:g}" '
         f'image-rendering="pixelated"/>'
         f'{embers()}'
         f'<rect width="{W}" height="{H}" fill="url(#edges)"/>'
@@ -201,24 +224,32 @@ def main():
                     help="supersample factor for the embedded art")
     args = ap.parse_args()
 
+    k = args.scale
+    g_src = trim(Image.open(args.gandalf).convert("RGBA"))
+    b_src = trim(Image.open(args.balrog).convert("RGBA"))
+
+    # stand each figure on its foot plane, not on the bottom of its bounding box
+    g_box = place(g_src, G_H, G_CX)
+    b_box = place(b_src, B_H, B_CX)
+
     # render above the layout size so the art stays crisp on high-dpi screens,
     # but not so far above that the banner turns into a megabyte
-    k = args.scale
-    g = quantize(fit_height(trim(Image.open(args.gandalf).convert("RGBA")), G_H * k), args.colors)
-    b = quantize(fit_height(trim(Image.open(args.balrog).convert("RGBA")), B_H * k), args.colors)
+    g = quantize(fit_height(g_src, g_box[1] * k), args.colors)
+    b = quantize(fit_height(b_src, b_box[1] * k), args.colors)
 
     # the pose is front-on, so the sword is what reads as direction: leave the
     # art alone and his blade points at the balrog
     if args.flip:
         g = g.transpose(Image.FLIP_LEFT_RIGHT)
 
-    svg = build_svg(data_uri(g), g.width / k, data_uri(b), b.width / k,
+    svg = build_svg(data_uri(g), g_box, data_uri(b), b_box,
                     STAFF_X=0.85 if args.flip else 0.15)
     path = os.path.join(args.out, "banner.svg")
     with open(path, "w") as f:
         f.write(svg)
     print(f"wrote {path} ({os.path.getsize(path) // 1024} KB) "
-          f"gandalf {round(g.width / k)}x{G_H} balrog {round(b.width / k)}x{B_H}")
+          f"gandalf {g_box[0]:.0f}x{g_box[1]:.0f} at y={g_box[3]:.0f} "
+          f"balrog {b_box[0]:.0f}x{b_box[1]:.0f} at y={b_box[3]:.0f} (deck {DECK})")
 
 
 if __name__ == "__main__":
