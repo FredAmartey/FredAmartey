@@ -151,7 +151,7 @@ def bridge():
 """
 
 
-def build_svg(g_uri, g_w, b_uri, b_w):
+def build_svg(g_uri, g_w, b_uri, b_w, STAFF_X=0.15):
     gx, gy = G_CX - g_w / 2, DECK - G_H + 4
     bx, by = B_CX - b_w / 2, DECK - B_H + 10
 
@@ -177,7 +177,7 @@ def build_svg(g_uri, g_w, b_uri, b_w):
         f'<image href="{b_uri}" x="{bx:g}" y="{by:g}" width="{b_w:g}" height="{B_H}" '
         f'image-rendering="pixelated"/>'
         # the staff carries its own light in the art; this only spills it onto the dark
-        f'<ellipse cx="{gx + g_w * 0.85:g}" cy="{gy + G_H * 0.07:g}" rx="34" ry="32" '
+        f'<ellipse cx="{gx + g_w * STAFF_X:g}" cy="{gy + G_H * 0.07:g}" rx="34" ry="32" '
         f'fill="url(#staffglow)" opacity="0.34">'
         f'<animate attributeName="opacity" values="0.26;0.42;0.3;0.4;0.26" dur="4.1s" '
         f'repeatCount="indefinite"/></ellipse>'
@@ -196,6 +196,7 @@ def main():
     ap.add_argument("--balrog", required=True)
     ap.add_argument("--out", default=".")
     ap.add_argument("--colors", type=int, default=128)
+    ap.add_argument("--flip", action="store_true", help="mirror gandalf")
     ap.add_argument("--scale", type=float, default=1.5,
                     help="supersample factor for the embedded art")
     args = ap.parse_args()
@@ -206,10 +207,13 @@ def main():
     g = quantize(fit_height(trim(Image.open(args.gandalf).convert("RGBA")), G_H * k), args.colors)
     b = quantize(fit_height(trim(Image.open(args.balrog).convert("RGBA")), B_H * k), args.colors)
 
-    # the art has him facing left; turn him to face the balrog
-    g = g.transpose(Image.FLIP_LEFT_RIGHT)
+    # the pose is front-on, so the sword is what reads as direction: leave the
+    # art alone and his blade points at the balrog
+    if args.flip:
+        g = g.transpose(Image.FLIP_LEFT_RIGHT)
 
-    svg = build_svg(data_uri(g), g.width / k, data_uri(b), b.width / k)
+    svg = build_svg(data_uri(g), g.width / k, data_uri(b), b.width / k,
+                    STAFF_X=0.85 if args.flip else 0.15)
     path = os.path.join(args.out, "banner.svg")
     with open(path, "w") as f:
         f.write(svg)
