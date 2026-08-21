@@ -47,11 +47,38 @@ def ground_row(img, thresh=0.01):
     return int(rows.max()) + 1 if len(rows) else img.height
 
 
-def place(img, stand_h, cx):
-    """Scale so the foot plane lands on the deck; return the SVG box."""
+def foot_span(img, depth=0.03):
+    """Where the figure actually meets the ground, as fractions of its width.
+
+    The contact shadow has to key off this, not off the sprite box: the box
+    spans wingtips and an outstretched sword, so a shadow scaled to it turns
+    into a wide dark pool that reads as a figure hovering over its own drop
+    shadow.
+    """
+    a = np.asarray(img)
+    gr = ground_row(img)
+    top = max(0, int(gr - depth * img.height))
+    sole = (a[top:gr, :, 3] > 200).any(axis=0)
+    cols = np.nonzero(sole)[0]
+    if not len(cols):
+        return 0.5, 0.3
+    return (cols.mean() / img.width,
+            (cols.max() - cols.min() + 1) / img.width)
+
+
+def place(img, stand_h, cx, sink=4.0):
+    """Scale so the foot plane lands on the deck; return the SVG box.
+
+    `sink` tucks the base a few units under the deck line. Downscaling tapers
+    the sprite's last rows to near-transparent, so a mathematically exact
+    landing still shows daylight between the figure and its shadow; sinking it
+    puts solid pixels on the stone.
+    """
     scale = stand_h / ground_row(img)
     w, h = img.width * scale, img.height * scale
-    return w, h, cx - w / 2, DECK - stand_h
+    # line the figure up by its feet, so it stands where we asked it to
+    fx, _ = foot_span(img)
+    return w, h, cx - w * fx, DECK + sink - stand_h
 
 
 def fit_height(img, h):
@@ -174,7 +201,21 @@ def bridge():
 """
 
 
-def build_svg(g_uri, g_box, b_uri, b_box, STAFF_X=0.15):
+def contact_shadow(box, span, opacity=0.55):
+    """A tight smudge right under the feet, not a pool the figure hovers over."""
+    w, h, x, y = box
+    fx, fw = span
+    cx = x + w * fx
+    rx = max(7.0, w * fw * 0.62)
+    return (
+        f'<ellipse cx="{cx:g}" cy="{DECK + 2}" rx="{rx:g}" ry="{max(2.5, rx * 0.09):g}" '
+        f'fill="#05040a" opacity="{opacity}"/>'
+        f'<ellipse cx="{cx:g}" cy="{DECK + 1.5}" rx="{rx * 0.55:g}" ry="{max(1.8, rx * 0.06):g}" '
+        f'fill="#000" opacity="{min(0.9, opacity + 0.2):g}"/>'
+    )
+
+
+def build_svg(g_uri, g_box, b_uri, b_box, g_span, b_span, STAFF_X=0.15):
     g_w, g_h, gx, gy = g_box
     b_w, b_h, bx, by = b_box
 
@@ -194,8 +235,8 @@ def build_svg(g_uri, g_box, b_uri, b_box, STAFF_X=0.15):
         f'</ellipse>'
         f'{bridge()}'
         # shadows they cast on the deck
-        f'<ellipse cx="{G_CX}" cy="{DECK + 4}" rx="{g_w * 0.24:g}" ry="5" fill="#000" opacity="0.5"/>'
-        f'<ellipse cx="{B_CX}" cy="{DECK + 7}" rx="{b_w * 0.24:g}" ry="9" fill="#000" opacity="0.55"/>'
+        f'{contact_shadow(g_box, g_span, 0.5)}'
+        f'{contact_shadow(b_box, b_span, 0.6)}'
         # the balrog, then gandalf in front of the light
         f'<image href="{b_uri}" x="{bx:g}" y="{by:g}" width="{b_w:g}" height="{b_h:g}" '
         f'image-rendering="pixelated"/>'
@@ -220,6 +261,8 @@ def main():
     ap.add_argument("--out", default=".")
     ap.add_argument("--colors", type=int, default=128)
     ap.add_argument("--flip", action="store_true", help="mirror gandalf")
+    ap.add_argument("--sink", type=float, default=4.0,
+                    help="units to tuck the figures under the deck line")
     ap.add_argument("--scale", type=float, default=1.5,
                     help="supersample factor for the embedded art")
     args = ap.parse_args()
@@ -229,8 +272,8 @@ def main():
     b_src = trim(Image.open(args.balrog).convert("RGBA"))
 
     # stand each figure on its foot plane, not on the bottom of its bounding box
-    g_box = place(g_src, G_H, G_CX)
-    b_box = place(b_src, B_H, B_CX)
+    g_box = place(g_src, G_H, G_CX, sink=args.sink)
+    b_box = place(b_src, B_H, B_CX, sink=args.sink + 1)
 
     # render above the layout size so the art stays crisp on high-dpi screens,
     # but not so far above that the banner turns into a megabyte
@@ -242,7 +285,11 @@ def main():
     if args.flip:
         g = g.transpose(Image.FLIP_LEFT_RIGHT)
 
-    svg = build_svg(data_uri(g), g_box, data_uri(b), b_box,
+    g_span, b_span = foot_span(g_src), foot_span(b_src)
+    if args.flip:
+        g_span = (1 - g_span[0], g_span[1])
+
+    svg = build_svg(data_uri(g), g_box, data_uri(b), b_box, g_span, b_span,
                     STAFF_X=0.85 if args.flip else 0.15)
     path = os.path.join(args.out, "banner.svg")
     with open(path, "w") as f:
