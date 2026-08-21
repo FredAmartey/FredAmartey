@@ -1,4 +1,6 @@
-<img src="banner.svg" width="100%" alt="Gandalf faces a Balrog on the bridge of Khazad-dum">
+<p align="center">
+  <img src="banner.svg" width="440" alt="Gandalf faces a Balrog on the bridge of Khazad-dum">
+</p>
 
 ### Delightful interfaces and agent infrastructure around them
 
