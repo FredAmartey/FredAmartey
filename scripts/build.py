@@ -2,9 +2,10 @@
 """Build the profile banner: the bridge of Khazad-dum.
 
 Takes the two character pieces (in art/, cutouts with alpha) and stages them
-either side of a stone span over a burning chasm. The cavern, bridge, firelight
-and embers are drawn in SVG; the characters ride along as embedded PNGs so the
-banner is one self-contained file.
+either side of a stone span over a burning chasm. The scene itself is painted
+by bg.py as pixel art; the characters ride along as embedded PNGs. Everything
+is inlined, so the banner is one self-contained file that survives GitHub's
+image proxy.
 
   python3 scripts/build.py --gandalf art/gandalf.png --balrog art/balrog.png --out .
 """
@@ -16,17 +17,20 @@ import os
 import numpy as np
 from PIL import Image
 
+import bg
+
 # ---------- canvas ----------
 
-W, H = 1200, 440
-DECK = 348            # far edge of the bridge, where the stone starts
-SURFACE = 20          # depth of the walking surface before the front face
+W, H = 1200, 520
+DECK = 372            # far edge of the bridge, where the stone starts
+SURFACE = 22          # depth of the walking surface before the front face
+FACE = 26             # height of the front face of the stone
 LIP = DECK + SURFACE  # front edge of the stone
 GROUND = LIP - 2      # where the lowest foot lands
-G_H = 190             # gandalf's height, measured to his feet
-B_H = 430             # the balrog towers over him
-G_CX = 330            # where each one stands
-B_CX = 810
+G_H = 180             # gandalf's height, measured to his feet
+B_H = 386             # the balrog towers over him
+G_CX = 280            # where each one stands
+B_CX = 800
 
 
 def trim(img):
@@ -72,7 +76,7 @@ def foot_span(img, depth=0.03):
 def place(img, stand_h, cx):
     """Scale so the lowest foot lands on the stone; return the SVG box.
 
-    These poses are wide stances and the two feet are not level — the Balrog's
+    These poses are wide stances and the two feet are not level: the Balrog's
     right claw sits 25px below his left. Landing the lowest one on the front lip
     puts the other on the walking surface behind it, and the front face of the
     stone is painted afterwards so anything that overhangs is occluded rather
@@ -80,7 +84,6 @@ def place(img, stand_h, cx):
     """
     scale = stand_h / ground_row(img)
     w, h = img.width * scale, img.height * scale
-    # line the figure up by its feet, so it stands where we asked it to
     fx, _ = foot_span(img)
     return w, h, cx - w * fx, GROUND - stand_h
 
@@ -99,28 +102,32 @@ def quantize(img, colors=200):
     return out
 
 
-def data_uri(img):
+def data_uri(img, colors=None):
+    if colors:
+        img = quantize(img, colors) if img.mode == "RGBA" else \
+            img.quantize(colors=colors, method=Image.MAXCOVERAGE)
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-# ---------- scene ----------
+# ---------- motion ----------
 
-def embers(seed=11, n=34):
+def embers(seed=11, n=30):
+    """Sparks off the fire below, carried up past the bridge."""
     rng = np.random.default_rng(seed)
     out = []
     for i in range(n):
-        x = float(rng.uniform(20, W - 20))
-        drift = float(rng.uniform(-22, 22))
+        x = float(rng.uniform(80, W - 80))
+        drift = float(rng.uniform(-26, 26))
         dur = float(rng.uniform(5.0, 11.0))
         delay = float(rng.uniform(0, 11.0))
-        r = float(rng.uniform(0.9, 2.3))
-        rise = float(rng.uniform(150, 330))
+        r = float(rng.uniform(0.9, 2.2))
+        rise = float(rng.uniform(170, 380))
         col = ["#ff9a3c", "#ffc763", "#f0561f"][i % 3]
         out.append(
-            f'<circle cx="{x:g}" cy="{H - 4:g}" r="{r:g}" fill="{col}" opacity="0">'
-            f'<animate attributeName="opacity" values="0;0.95;0.75;0" keyTimes="0;0.12;0.6;1" '
+            f'<circle cx="{x:g}" cy="{H - 6:g}" r="{r:g}" fill="{col}" opacity="0">'
+            f'<animate attributeName="opacity" values="0;0.95;0.7;0" keyTimes="0;0.12;0.6;1" '
             f'dur="{dur:g}s" begin="-{delay:g}s" repeatCount="indefinite"/>'
             f'<animateTransform attributeName="transform" type="translate" '
             f'values="0 0;{drift:g} -{rise:g}" dur="{dur:g}s" begin="-{delay:g}s" '
@@ -129,95 +136,26 @@ def embers(seed=11, n=34):
     return "".join(out)
 
 
-DEFS = f"""<defs>
-  <linearGradient id="air" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#08070c"/>
-    <stop offset="0.5" stop-color="#100a10"/>
-    <stop offset="1" stop-color="#25100e"/>
-  </linearGradient>
-  <linearGradient id="pit" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#ff6a14" stop-opacity="0"/>
-    <stop offset="0.35" stop-color="#ff6a14" stop-opacity="0.18"/>
-    <stop offset="0.72" stop-color="#ff8420" stop-opacity="0.50"/>
-    <stop offset="1" stop-color="#ffc25c" stop-opacity="0.80"/>
-  </linearGradient>
-  <radialGradient id="hellglow" cx="0.5" cy="0.5" r="0.5">
-    <stop offset="0" stop-color="#ff7a24" stop-opacity="0.55"/>
-    <stop offset="0.55" stop-color="#e0431a" stop-opacity="0.22"/>
-    <stop offset="1" stop-color="#e0431a" stop-opacity="0"/>
-  </radialGradient>
+def flicker(cx, cy, rx, ry, fill, values, dur, opacity=1.0):
+    """The painted fire is a still frame; this breathes over the top of it."""
+    return (f'<ellipse cx="{cx:g}" cy="{cy:g}" rx="{rx:g}" ry="{ry:g}" fill="{fill}" '
+            f'opacity="{opacity}" style="mix-blend-mode:screen">'
+            f'<animate attributeName="opacity" values="{values}" dur="{dur}s" '
+            f'repeatCount="indefinite"/></ellipse>')
+
+
+DEFS = """<defs>
   <radialGradient id="staffglow" cx="0.5" cy="0.5" r="0.5">
     <stop offset="0" stop-color="#ffe9b8" stop-opacity="0.85"/>
     <stop offset="0.4" stop-color="#ffb648" stop-opacity="0.35"/>
     <stop offset="1" stop-color="#ff9a2b" stop-opacity="0"/>
   </radialGradient>
-  <linearGradient id="walk" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#211f2a"/>
-    <stop offset="0.5" stop-color="#2e2c39"/>
-    <stop offset="1" stop-color="#3b3847"/>
-  </linearGradient>
-  <linearGradient id="stone" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#3a3944"/>
-    <stop offset="0.35" stop-color="#26242e"/>
-    <stop offset="1" stop-color="#141219"/>
-  </linearGradient>
-  <linearGradient id="edges" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0" stop-color="#08070c" stop-opacity="0.95"/>
-    <stop offset="0.12" stop-color="#08070c" stop-opacity="0"/>
-    <stop offset="0.88" stop-color="#08070c" stop-opacity="0"/>
-    <stop offset="1" stop-color="#08070c" stop-opacity="0.95"/>
-  </linearGradient>
-  <linearGradient id="topfade" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="#08070c" stop-opacity="0.9"/>
-    <stop offset="1" stop-color="#08070c" stop-opacity="0"/>
-  </linearGradient>
+  <radialGradient id="hellglow" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#ff7a24" stop-opacity="0.5"/>
+    <stop offset="0.55" stop-color="#e0431a" stop-opacity="0.2"/>
+    <stop offset="1" stop-color="#e0431a" stop-opacity="0"/>
+  </radialGradient>
 </defs>"""
-
-
-def cavern():
-    """arches and columns receding into the dark"""
-    parts = []
-    for x, w, top, op in [(30, 150, 150, 0.85), (250, 130, 120, 0.7),
-                          (470, 165, 165, 0.8), (720, 140, 128, 0.65),
-                          (960, 175, 155, 0.8)]:
-        parts.append(
-            f'<path d="M{x} {DECK} L{x} {top} Q{x + w / 2} {top - 62} {x + w} {top} '
-            f'L{x + w} {DECK} Z" fill="#0b0a11" opacity="{op}"/>'
-        )
-    for x, w, op in [(96, 30, 0.75), (318, 22, 0.6), (556, 34, 0.7),
-                     (792, 24, 0.55), (1052, 32, 0.7)]:
-        parts.append(f'<rect x="{x}" y="0" width="{w}" height="{DECK}" '
-                     f'fill="#0e0d15" opacity="{op}"/>')
-    # a couple of distant torches
-    for tx, ty in [(112, 150), (566, 168)]:
-        parts.append(
-            f'<circle cx="{tx}" cy="{ty}" r="16" fill="url(#staffglow)" opacity="0.5">'
-            f'<animate attributeName="opacity" values="0.35;0.6;0.4;0.55;0.35" dur="3.1s" '
-            f'repeatCount="indefinite"/></circle>'
-            f'<circle cx="{tx}" cy="{ty}" r="2.4" fill="#ffd08a"/>'
-        )
-    return "".join(parts)
-
-
-def bridge_surface():
-    """The stone they walk on. Painted before the figures."""
-    return f"""
-  <rect x="0" y="{DECK}" width="{W}" height="{SURFACE}" fill="url(#walk)"/>
-  <path d="M0 {DECK} L{W} {DECK}" stroke="#55545f" stroke-width="1.5" opacity="0.55"/>
-  {''.join(f'<rect x="{x}" y="{DECK}" width="1.5" height="{SURFACE}" fill="#0d0c12" opacity="0.35"/>' for x in range(0, W, 58))}
-"""
-
-
-def bridge_face():
-    """The front of the stone. Painted after the figures, so a foot that
-    overhangs the lip is hidden behind it instead of dangling in mid air."""
-    return f"""
-  <rect x="0" y="{LIP}" width="{W}" height="24" fill="url(#stone)"/>
-  <path d="M0 {LIP} L{W} {LIP}" stroke="#6a6878" stroke-width="2" opacity="0.85"/>
-  {''.join(f'<rect x="{x}" y="{LIP + 1}" width="2" height="22" fill="#0c0b11" opacity="0.5"/>' for x in range(0, W, 58))}
-  <path d="M0 {LIP + 24} L{W} {LIP + 24} L{W} {LIP + 34} Q{W * 0.5} {LIP + 52} 0 {LIP + 34} Z"
-        fill="#100e16"/>
-"""
 
 
 def contact_shadow(box, span, opacity=0.55):
@@ -235,43 +173,44 @@ def contact_shadow(box, span, opacity=0.55):
     )
 
 
-def build_svg(g_uri, g_box, b_uri, b_box, g_span, b_span, STAFF_X=0.15):
+def build_svg(back, front, g_uri, g_box, b_uri, b_box, g_span, b_span, style,
+              staff_x=0.15):
     g_w, g_h, gx, gy = g_box
     b_w, b_h, bx, by = b_box
+    fire = (flicker(W * 0.66, DECK - 60, 120, 130, "url(#hellglow)",
+                    "0.55;0.85;0.5;0.75;0.55", 4.7)
+            + flicker(W * 0.5, H - 20, W * 0.42, 70, "url(#hellglow)",
+                      "0.7;0.45;0.7", 6.9)) if style != "void" else \
+        flicker(W * 0.5, H - 20, W * 0.4, 60, "url(#hellglow)",
+                "0.45;0.3;0.45", 7.4)
+    torch = "".join(
+        flicker(x, y, 26, 26, "url(#staffglow)", "0.3;0.55;0.34;0.5;0.3", 3.1 + i * 0.7)
+        for i, (x, y) in enumerate([(254, DECK - 300), (806, DECK - 316)])
+    ) if style == "khazad" else ""
 
     return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+        f'width="{W}" height="{H}">'
         f'<title>The bridge of Khazad-dum</title>'
         f'{DEFS}'
-        f'<rect width="{W}" height="{H}" fill="url(#air)"/>'
-        f'{cavern()}'
-        f'<rect x="0" y="{DECK}" width="{W}" height="{H - DECK}" fill="url(#pit)"/>'
-        # the fire behind the balrog
-        f'<ellipse cx="{B_CX}" cy="{DECK - 150}" rx="420" ry="250" fill="url(#hellglow)">'
-        f'<animate attributeName="opacity" values="0.9;1;0.86;1;0.9" dur="5.2s" '
-        f'repeatCount="indefinite"/></ellipse>'
-        f'<ellipse cx="{W * 0.5}" cy="{H}" rx="{W * 0.6}" ry="110" fill="url(#hellglow)">'
-        f'<animate attributeName="opacity" values="1;0.82;1" dur="7.3s" repeatCount="indefinite"/>'
-        f'</ellipse>'
-        f'{bridge_surface()}'
-        # the smudge each of them leaves on the stone
+        f'<image href="{back}" x="0" y="0" width="{W}" height="{H}" '
+        f'image-rendering="pixelated"/>'
+        f'{torch}{fire}'
         f'{contact_shadow(g_box, g_span, 0.5)}'
         f'{contact_shadow(b_box, b_span, 0.6)}'
-        # the balrog, then gandalf in front of the light
         f'<image href="{b_uri}" x="{bx:g}" y="{by:g}" width="{b_w:g}" height="{b_h:g}" '
         f'image-rendering="pixelated"/>'
         # the staff carries its own light in the art; this only spills it onto the dark
-        f'<ellipse cx="{gx + g_w * STAFF_X:g}" cy="{gy + g_h * 0.07:g}" rx="34" ry="32" '
+        f'<ellipse cx="{gx + g_w * staff_x:g}" cy="{gy + g_h * 0.07:g}" rx="34" ry="32" '
         f'fill="url(#staffglow)" opacity="0.34">'
         f'<animate attributeName="opacity" values="0.26;0.42;0.3;0.4;0.26" dur="4.1s" '
         f'repeatCount="indefinite"/></ellipse>'
         f'<image href="{g_uri}" x="{gx:g}" y="{gy:g}" width="{g_w:g}" height="{g_h:g}" '
         f'image-rendering="pixelated"/>'
         # the lip goes over their feet, so nothing hangs off the edge
-        f'{bridge_face()}'
+        f'<image href="{front}" x="0" y="0" width="{W}" height="{H}" '
+        f'image-rendering="pixelated"/>'
         f'{embers()}'
-        f'<rect width="{W}" height="{H}" fill="url(#edges)"/>'
-        f'<rect width="{W}" height="120" fill="url(#topfade)"/>'
         f'</svg>'
     )
 
@@ -281,6 +220,9 @@ def main():
     ap.add_argument("--gandalf", required=True)
     ap.add_argument("--balrog", required=True)
     ap.add_argument("--out", default=".")
+    ap.add_argument("--name", default="banner.svg")
+    ap.add_argument("--style", default="khazad",
+                    choices=["khazad", "firewall", "void"])
     ap.add_argument("--colors", type=int, default=128)
     ap.add_argument("--flip", action="store_true", help="mirror gandalf")
     ap.add_argument("--scale", type=float, default=1.5,
@@ -309,14 +251,17 @@ def main():
     if args.flip:
         g_span = (1 - g_span[0], g_span[1])
 
-    svg = build_svg(data_uri(g), g_box, data_uri(b), b_box, g_span, b_span,
-                    STAFF_X=0.85 if args.flip else 0.15)
-    path = os.path.join(args.out, "banner.svg")
+    back, front = bg.render(W, H, DECK, SURFACE, FACE, args.style)
+
+    svg = build_svg(data_uri(back, 200), data_uri(front, 96),
+                    data_uri(g), g_box, data_uri(b), b_box, g_span, b_span,
+                    args.style, staff_x=0.85 if args.flip else 0.15)
+    path = os.path.join(args.out, args.name)
     with open(path, "w") as f:
         f.write(svg)
-    print(f"wrote {path} ({os.path.getsize(path) // 1024} KB) "
+    print(f"wrote {path} ({os.path.getsize(path) // 1024} KB, {args.style}) "
           f"gandalf {g_box[0]:.0f}x{g_box[1]:.0f} at y={g_box[3]:.0f} "
-          f"balrog {b_box[0]:.0f}x{b_box[1]:.0f} at y={b_box[3]:.0f} (deck {DECK})")
+          f"balrog {b_box[0]:.0f}x{b_box[1]:.0f} at y={b_box[3]:.0f}")
 
 
 if __name__ == "__main__":
