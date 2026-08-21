@@ -19,8 +19,11 @@ from PIL import Image
 # ---------- canvas ----------
 
 W, H = 1200, 440
-DECK = 372            # top of the bridge deck
-G_H = 190             # gandalf's height on the deck
+DECK = 348            # far edge of the bridge, where the stone starts
+SURFACE = 20          # depth of the walking surface before the front face
+LIP = DECK + SURFACE  # front edge of the stone
+GROUND = LIP - 2      # where the lowest foot lands
+G_H = 190             # gandalf's height, measured to his feet
 B_H = 430             # the balrog towers over him
 G_CX = 330            # where each one stands
 B_CX = 810
@@ -66,19 +69,20 @@ def foot_span(img, depth=0.03):
             (cols.max() - cols.min() + 1) / img.width)
 
 
-def place(img, stand_h, cx, sink=4.0):
-    """Scale so the foot plane lands on the deck; return the SVG box.
+def place(img, stand_h, cx):
+    """Scale so the lowest foot lands on the stone; return the SVG box.
 
-    `sink` tucks the base a few units under the deck line. Downscaling tapers
-    the sprite's last rows to near-transparent, so a mathematically exact
-    landing still shows daylight between the figure and its shadow; sinking it
-    puts solid pixels on the stone.
+    These poses are wide stances and the two feet are not level — the Balrog's
+    right claw sits 25px below his left. Landing the lowest one on the front lip
+    puts the other on the walking surface behind it, and the front face of the
+    stone is painted afterwards so anything that overhangs is occluded rather
+    than left dangling.
     """
     scale = stand_h / ground_row(img)
     w, h = img.width * scale, img.height * scale
     # line the figure up by its feet, so it stands where we asked it to
     fx, _ = foot_span(img)
-    return w, h, cx - w * fx, DECK + sink - stand_h
+    return w, h, cx - w * fx, GROUND - stand_h
 
 
 def fit_height(img, h):
@@ -147,6 +151,11 @@ DEFS = f"""<defs>
     <stop offset="0.4" stop-color="#ffb648" stop-opacity="0.35"/>
     <stop offset="1" stop-color="#ff9a2b" stop-opacity="0"/>
   </radialGradient>
+  <linearGradient id="walk" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#211f2a"/>
+    <stop offset="0.5" stop-color="#2e2c39"/>
+    <stop offset="1" stop-color="#3b3847"/>
+  </linearGradient>
   <linearGradient id="stone" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0" stop-color="#3a3944"/>
     <stop offset="0.35" stop-color="#26242e"/>
@@ -190,14 +199,24 @@ def cavern():
     return "".join(parts)
 
 
-def bridge():
+def bridge_surface():
+    """The stone they walk on. Painted before the figures."""
     return f"""
-  <path d="M0 {DECK} L{W} {DECK} L{W} {DECK + 26} L0 {DECK + 26} Z" fill="url(#stone)"/>
-  <path d="M0 {DECK} L{W} {DECK}" stroke="#5b5a6b" stroke-width="2" opacity="0.9"/>
-  <path d="M0 {DECK + 26} L{W} {DECK + 26} L{W} {DECK + 44} Q{W * 0.5} {DECK + 66} 0 {DECK + 44} Z"
+  <rect x="0" y="{DECK}" width="{W}" height="{SURFACE}" fill="url(#walk)"/>
+  <path d="M0 {DECK} L{W} {DECK}" stroke="#55545f" stroke-width="1.5" opacity="0.55"/>
+  {''.join(f'<rect x="{x}" y="{DECK}" width="1.5" height="{SURFACE}" fill="#0d0c12" opacity="0.35"/>' for x in range(0, W, 58))}
+"""
+
+
+def bridge_face():
+    """The front of the stone. Painted after the figures, so a foot that
+    overhangs the lip is hidden behind it instead of dangling in mid air."""
+    return f"""
+  <rect x="0" y="{LIP}" width="{W}" height="24" fill="url(#stone)"/>
+  <path d="M0 {LIP} L{W} {LIP}" stroke="#6a6878" stroke-width="2" opacity="0.85"/>
+  {''.join(f'<rect x="{x}" y="{LIP + 1}" width="2" height="22" fill="#0c0b11" opacity="0.5"/>' for x in range(0, W, 58))}
+  <path d="M0 {LIP + 24} L{W} {LIP + 24} L{W} {LIP + 34} Q{W * 0.5} {LIP + 52} 0 {LIP + 34} Z"
         fill="#100e16"/>
-  <path d="M0 {DECK + 26} L{W} {DECK + 26}" stroke="#191822" stroke-width="3" opacity="0.9"/>
-  {''.join(f'<rect x="{x}" y="{DECK + 2}" width="2" height="22" fill="#0e0d14" opacity="0.55"/>' for x in range(0, W, 46))}
 """
 
 
@@ -207,10 +226,11 @@ def contact_shadow(box, span, opacity=0.55):
     fx, fw = span
     cx = x + w * fx
     rx = max(7.0, w * fw * 0.62)
+    cy = GROUND - 1
     return (
-        f'<ellipse cx="{cx:g}" cy="{DECK + 2}" rx="{rx:g}" ry="{max(2.5, rx * 0.09):g}" '
+        f'<ellipse cx="{cx:g}" cy="{cy:g}" rx="{rx:g}" ry="{max(2.5, rx * 0.08):g}" '
         f'fill="#05040a" opacity="{opacity}"/>'
-        f'<ellipse cx="{cx:g}" cy="{DECK + 1.5}" rx="{rx * 0.55:g}" ry="{max(1.8, rx * 0.06):g}" '
+        f'<ellipse cx="{cx:g}" cy="{cy:g}" rx="{rx * 0.5:g}" ry="{max(1.8, rx * 0.05):g}" '
         f'fill="#000" opacity="{min(0.9, opacity + 0.2):g}"/>'
     )
 
@@ -233,8 +253,8 @@ def build_svg(g_uri, g_box, b_uri, b_box, g_span, b_span, STAFF_X=0.15):
         f'<ellipse cx="{W * 0.5}" cy="{H}" rx="{W * 0.6}" ry="110" fill="url(#hellglow)">'
         f'<animate attributeName="opacity" values="1;0.82;1" dur="7.3s" repeatCount="indefinite"/>'
         f'</ellipse>'
-        f'{bridge()}'
-        # shadows they cast on the deck
+        f'{bridge_surface()}'
+        # the smudge each of them leaves on the stone
         f'{contact_shadow(g_box, g_span, 0.5)}'
         f'{contact_shadow(b_box, b_span, 0.6)}'
         # the balrog, then gandalf in front of the light
@@ -247,6 +267,8 @@ def build_svg(g_uri, g_box, b_uri, b_box, g_span, b_span, STAFF_X=0.15):
         f'repeatCount="indefinite"/></ellipse>'
         f'<image href="{g_uri}" x="{gx:g}" y="{gy:g}" width="{g_w:g}" height="{g_h:g}" '
         f'image-rendering="pixelated"/>'
+        # the lip goes over their feet, so nothing hangs off the edge
+        f'{bridge_face()}'
         f'{embers()}'
         f'<rect width="{W}" height="{H}" fill="url(#edges)"/>'
         f'<rect width="{W}" height="120" fill="url(#topfade)"/>'
@@ -261,8 +283,6 @@ def main():
     ap.add_argument("--out", default=".")
     ap.add_argument("--colors", type=int, default=128)
     ap.add_argument("--flip", action="store_true", help="mirror gandalf")
-    ap.add_argument("--sink", type=float, default=4.0,
-                    help="units to tuck the figures under the deck line")
     ap.add_argument("--scale", type=float, default=1.5,
                     help="supersample factor for the embedded art")
     args = ap.parse_args()
@@ -272,8 +292,8 @@ def main():
     b_src = trim(Image.open(args.balrog).convert("RGBA"))
 
     # stand each figure on its foot plane, not on the bottom of its bounding box
-    g_box = place(g_src, G_H, G_CX, sink=args.sink)
-    b_box = place(b_src, B_H, B_CX, sink=args.sink + 1)
+    g_box = place(g_src, G_H, G_CX)
+    b_box = place(b_src, B_H, B_CX)
 
     # render above the layout size so the art stays crisp on high-dpi screens,
     # but not so far above that the banner turns into a megabyte
