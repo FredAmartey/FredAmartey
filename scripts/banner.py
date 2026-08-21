@@ -1,195 +1,192 @@
 #!/usr/bin/env python3
-"""Build the profile banner: two cutouts standing on a ledge, on nothing else.
+"""Build the cinematic profile banner.
 
-Earlier versions put the whole Khazad-dum painting in the README and tried to
-dissolve its edges. That never worked. A painting has a background, so however
-softly its border is faded there is always a patch of somebody else's darkness
-sitting on the page, and a soft rectangle is still a rectangle.
+The source scene is deliberately reduced to a transparent collage rather than
+embedded as a rectangular painting. Dark architecture dissolves into GitHub's
+page background while the bridge, fire and two figures stay legible in either
+theme. The SVG adds a restrained layer of embers around the raster artwork.
 
-There is no painting here. The only opaque things in the file are the two
-figures, the stone under them and the shadows they cast on it; everything else
-is transparent and the page shows through. The ledge runs out into nothing at
-both ends, so it has no edge either. That also means one file serves every
-GitHub theme, because there is no background colour to match.
+Run from anywhere with:
 
-  python3 scripts/banner.py
+    python3 scripts/banner.py
 """
+
+from __future__ import annotations
+
 import base64
 import io
 import os
+
 import numpy as np
-from PIL import Image, ImageFilter
-
-W, H = 1200, 460
-DECK, SURFACE, FACE = 384, 18, 22
-LIP = DECK + SURFACE
-GROUND = LIP - 2
-G_H, B_H = 165, 350
-G_CX, B_CX = 300, 800
-
-HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ART_G = os.path.join(HERE, 'art', 'gandalf.png')
-ART_B = os.path.join(HERE, 'art', 'balrog.png')
-OUT = os.path.join(HERE, 'banner.svg')
+from PIL import Image, ImageDraw, ImageFilter
 
 
-def smooth(t):
-    t = np.clip(t, 0, 1)
-    return t * t * (3 - 2 * t)
+W, H = 1600, 700
+TRAVELER_HEIGHT = 176
+DEMON_HEIGHT = 470
+TRAVELER_X, TRAVELER_GROUND = 370, 486
+DEMON_X, DEMON_GROUND = 1160, 426
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ART = os.path.join(ROOT, "art")
+SCENE_PATH = os.path.join(ART, "bridge-background.png")
+TRAVELER_PATH = os.path.join(ART, "traveler.png")
+DEMON_PATH = os.path.join(ART, "fire-demon.png")
+OUT = os.path.join(ROOT, "banner.svg")
 
 
-def trim(img):
-    bb = img.getbbox()
-    return img.crop(bb) if bb else img
+def smoothstep(value: np.ndarray) -> np.ndarray:
+    value = np.clip(value, 0, 1)
+    return value * value * (3 - 2 * value)
 
 
-def ground_row(img, thresh=0.01):
-    a = np.asarray(img)
-    solid = (a[:, :, 3] > 200).sum(axis=1)
-    rows = np.nonzero(solid >= max(2, int(thresh * img.width)))[0]
-    return int(rows.max()) + 1 if len(rows) else img.height
+def trim(image: Image.Image) -> Image.Image:
+    box = image.getbbox()
+    return image.crop(box) if box else image
 
 
-def foot_span(img, depth=0.03):
-    a = np.asarray(img)
-    gr = ground_row(img)
-    sole = (a[max(0, int(gr - depth * img.height)):gr, :, 3] > 200).any(axis=0)
-    cols = np.nonzero(sole)[0]
-    if not len(cols):
-        return 0.5, 0.3
-    return cols.mean() / img.width, (cols.max() - cols.min() + 1) / img.width
+def cover(image: Image.Image) -> Image.Image:
+    """Resize and crop around the bridge, not the geometric centre."""
+    scale = max(W / image.width, H / image.height)
+    size = (round(image.width * scale), round(image.height * scale))
+    resized = image.resize(size, Image.Resampling.LANCZOS)
+    left = max(0, (resized.width - W) // 2)
+    overflow = max(0, resized.height - H)
+    top = round(overflow * 0.48)
+    return resized.crop((left, top, left + W, top + H))
 
 
-def place(img, stand_h, cx):
-    s = stand_h / ground_row(img)
-    w, h = img.width * s, img.height * s
-    fx, _ = foot_span(img)
-    return round(w), round(h), round(cx - w * fx), round(GROUND - stand_h)
-
-
-def noise(h, w, cells, seed):
-    r = np.random.default_rng(seed)
-    small = (r.random((max(2, cells), max(2, int(cells * w / h)))) * 255).astype(np.uint8)
-    return np.asarray(Image.fromarray(small).resize((w, h), Image.BICUBIC), np.float32) / 255
-
-
-def fbm(h, w, seed, octaves=5, cells=4):
-    out, amp, tot = np.zeros((h, w), np.float32), 1.0, 0.0
-    for i in range(octaves):
-        out += amp * noise(h, w, cells * 2 ** i, seed + 101 * i)
-        tot += amp
-        amp *= 0.55
-    return out / tot
-
-
-def ledge():
-    """The stone they stand on, running out of the dark at both ends."""
+def scene_layer() -> Image.Image:
+    scene = cover(Image.open(SCENE_PATH).convert("RGB"))
+    rgb = np.asarray(scene, dtype=np.float32) / 255
     y, x = np.mgrid[0:H, 0:W].astype(np.float32)
-    rgb = np.zeros((H, W, 3), np.float32)
-    a = np.zeros((H, W), np.float32)
 
-    grain = 1.0 + (fbm(H, W, 5, cells=5) - 0.5) * 0.45
-    course = ((y.astype(int) // 11) % 2) * 14
-    joint = (((x.astype(int) + course) % 30) < 1.4) | ((y.astype(int) % 11) < 1)
+    luminance = rgb @ np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+    fire = np.clip((rgb[:, :, 0] - rgb[:, :, 1] * 0.72 - 0.05) * 3.2, 0, 1)
+    detail = smoothstep((luminance - 0.018) / 0.18)
 
-    top = (y >= DECK) & (y < LIP)
-    face = (y >= LIP) & (y < LIP + FACE)
-    v = np.where(joint, 0.55, 1.0) * grain
-    rgb[top] = (np.clip(v, 0.3, 1.7)[..., None] * np.array([0.17, 0.165, 0.20]))[top]
-    warm = np.clip((y - LIP) / FACE, 0, 1)
-    fv = np.clip(v, 0.3, 1.7)[..., None] * np.array([0.115, 0.108, 0.135])
-    fv = fv * (1.05 - 0.4 * warm)[..., None] + (warm ** 2)[..., None] * np.array([0.30, 0.09, 0.02])
-    rgb[face] = fv[face]
-    a[top | face] = 1.0
-    # the lit near edge
-    lip = np.abs(y - DECK) < 1.3
-    rgb[lip] = np.array([0.42, 0.43, 0.50])
+    edge = (
+        smoothstep(x / 128)
+        * smoothstep((W - 1 - x) / 128)
+        * smoothstep(y / 72)
+        * smoothstep((H - 1 - y) / 118)
+    )
 
-    # run it out into nothing at both ends and just under the front face
-    a *= smooth(x / 190) * smooth((W - 1 - x) / 190)
-    a *= smooth((LIP + FACE + 6 - y) / 10)
-    return rgb, a
+    # Keep the story line of the bridge intact while allowing the surrounding
+    # black stone to disappear into the page.
+    bridge_y = 526 - 0.12 * x
+    bridge = np.exp(-((y - bridge_y) / 92) ** 2)
+    atmosphere = np.maximum(detail, fire)
+    alpha = edge * np.maximum(0.18 + atmosphere * 0.78, bridge * 0.84)
+
+    rgba = np.dstack((rgb, np.clip(alpha, 0, 0.98)))
+    return Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
 
 
-def shadow(box, span, strength):
-    y, x = np.mgrid[0:H, 0:W].astype(np.float32)
-    w, h, bx, by = box
-    fx, fw = span
-    cx = bx + w * fx
-    rx = max(9.0, w * fw * 0.62)
-    d = ((x - cx) / rx) ** 2 + ((y - (GROUND - 1)) / max(3.0, rx * 0.10)) ** 2
-    return np.clip(1.0 - d, 0, 1) ** 0.7 * strength
+def ground_row(image: Image.Image) -> int:
+    alpha = np.asarray(image)[:, :, 3]
+    solid = (alpha > 180).sum(axis=1)
+    rows = np.nonzero(solid >= max(2, int(image.width * 0.012)))[0]
+    return int(rows.max()) + 1 if len(rows) else image.height
 
 
-def over(dst_rgb, dst_a, src_rgb, src_a):
-    a = src_a[..., None]
-    out_a = src_a + dst_a * (1 - src_a)
-    num = src_rgb * a + dst_rgb * dst_a[..., None] * (1 - a)
-    return np.divide(num, np.maximum(out_a, 1e-6)[..., None]), out_a
+def foot_anchor(image: Image.Image) -> float:
+    alpha = np.asarray(image)[:, :, 3]
+    ground = ground_row(image)
+    depth = max(2, round(image.height * 0.035))
+    sole = (alpha[max(0, ground - depth) : ground] > 180).any(axis=0)
+    columns = np.nonzero(sole)[0]
+    return float(columns.mean() / image.width) if len(columns) else 0.5
 
 
-def paste(dst_rgb, dst_a, img, box):
-    w, h, x, y = box
-    s = img.resize((w, h), Image.LANCZOS)
-    arr = np.asarray(s, np.float32) / 255
-    layer_rgb = np.zeros((H, W, 3), np.float32)
-    layer_a = np.zeros((H, W), np.float32)
-    x0, y0 = max(0, x), max(0, y)
-    x1, y1 = min(W, x + w), min(H, y + h)
-    sub = arr[y0 - y:y1 - y, x0 - x:x1 - x]
-    layer_rgb[y0:y1, x0:x1] = sub[:, :, :3]
-    layer_a[y0:y1, x0:x1] = sub[:, :, 3]
-    return over(dst_rgb, dst_a, layer_rgb, layer_a)
+def place(image: Image.Image, height: int, x: int, ground: int) -> tuple[Image.Image, int, int]:
+    scale = height / ground_row(image)
+    size = (round(image.width * scale), round(image.height * scale))
+    resized = image.resize(size, Image.Resampling.LANCZOS)
+    left = round(x - size[0] * foot_anchor(image))
+    top = round(ground - height)
+    return resized, left, top
 
 
-def build():
-    g = trim(Image.open(ART_G).convert('RGBA'))
-    b = trim(Image.open(ART_B).convert('RGBA'))
-    gb, bb = place(g, G_H, G_CX), place(b, B_H, B_CX)
-
-    rgb, a = ledge()
-    for box, src, s in ((bb, b, 0.75), (gb, g, 0.6)):
-        sh = shadow(box, foot_span(src), s)
-        rgb, a = over(rgb, a, np.zeros((H, W, 3), np.float32), sh)
-    rgb, a = paste(rgb, a, b, bb)
-    rgb, a = paste(rgb, a, g, gb)
-
-    ys, xs = np.nonzero(a > 0.02)
-    t, bm = max(0, ys.min() - 10), min(H, ys.max() + 12)
-    l, r = max(0, xs.min() - 10), min(W, xs.max() + 12)
-    return rgb[t:bm, l:r], a[t:bm, l:r], gb, bb, (l, t)
+def shadow(canvas: Image.Image, x: int, y: int, width: int, opacity: int) -> None:
+    layer = Image.new("RGBA", canvas.size)
+    draw = ImageDraw.Draw(layer)
+    draw.ellipse((x - width, y - 11, x + width, y + 9), fill=(0, 0, 0, opacity))
+    layer = layer.filter(ImageFilter.GaussianBlur(9))
+    canvas.alpha_composite(layer)
 
 
-rgb, a, gb, bb, off = build()
-h, w = a.shape
-im = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8)).convert('RGBA')
-im.putalpha(Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8)))
-buf = io.BytesIO()
-im.save(buf, format='WEBP', quality=92, method=6)
-uri = 'data:image/webp;base64,' + base64.b64encode(buf.getvalue()).decode()
+def build_raster() -> Image.Image:
+    canvas = scene_layer()
+    traveler = trim(Image.open(TRAVELER_PATH).convert("RGBA"))
+    demon = trim(Image.open(DEMON_PATH).convert("RGBA"))
 
-rng = np.random.default_rng(11)
-sparks = "".join(
-    f'<circle cx="{rng.uniform(0.18,0.82)*w:.0f}" cy="{h-6}" r="{rng.uniform(0.9,2.3):.1f}" '
-    f'fill="{["#ff9a3c","#ffc763","#f0561f"][i%3]}" opacity="0">'
-    f'<animate attributeName="opacity" values="0;0.85;0.5;0" keyTimes="0;0.12;0.6;1" '
-    f'dur="{(d:=rng.uniform(6,13)):.1f}s" begin="-{rng.uniform(0,13):.1f}s" repeatCount="indefinite"/>'
-    f'<animateTransform attributeName="transform" type="translate" '
-    f'values="0 0;{rng.uniform(-40,40):.0f} -{rng.uniform(0.3,0.9)*h:.0f}" dur="{d:.1f}s" '
-    f'begin="-{rng.uniform(0,13):.1f}s" repeatCount="indefinite"/></circle>' for i in range(38))
+    traveler, tx, ty = place(traveler, TRAVELER_HEIGHT, TRAVELER_X, TRAVELER_GROUND)
+    demon, dx, dy = place(demon, DEMON_HEIGHT, DEMON_X, DEMON_GROUND)
 
-bx = bb[2] - off[0] + bb[0] * 0.55
-by = bb[3] - off[1] + bb[1] * 0.45
-svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}">'
-       f'<title>The bridge of Khazad-dum</title>'
-       f'<defs><radialGradient id="spill" cx="0.5" cy="0.5" r="0.5">'
-       f'<stop offset="0" stop-color="#ff8b2a" stop-opacity="0.26"/>'
-       f'<stop offset="0.5" stop-color="#e8531a" stop-opacity="0.08"/>'
-       f'<stop offset="1" stop-color="#e8531a" stop-opacity="0"/></radialGradient></defs>'
-       f'<ellipse cx="{bx:.0f}" cy="{by:.0f}" rx="{w*0.55:.0f}" ry="{h*0.7:.0f}" fill="url(#spill)">'
-       f'<animate attributeName="opacity" values="0.75;1;0.8;0.95;0.75" dur="5.6s" '
-       f'repeatCount="indefinite"/></ellipse>'
-       f'<image href="{uri}" x="0" y="0" width="{w}" height="{h}" image-rendering="pixelated"/>'
-       f'{sparks}</svg>')
-open(OUT, 'w').write(svg)
-print(f'wrote {OUT} ({os.path.getsize(OUT) // 1024} KB) {w}x{h}')
+    shadow(canvas, TRAVELER_X, TRAVELER_GROUND, 58, 108)
+    shadow(canvas, DEMON_X, DEMON_GROUND, 172, 146)
+    canvas.alpha_composite(demon, (dx, dy))
+    canvas.alpha_composite(traveler, (tx, ty))
+    return canvas
+
+
+def webp_uri(image: Image.Image) -> str:
+    buffer = io.BytesIO()
+    image.save(buffer, "WEBP", quality=91, method=6)
+    return "data:image/webp;base64," + base64.b64encode(buffer.getvalue()).decode()
+
+
+def spark_markup() -> str:
+    rng = np.random.default_rng(28)
+    colors = ["#ff9a3c", "#ffc763", "#f0561f"]
+    sparks: list[str] = []
+    for index in range(34):
+        start_x = rng.uniform(0.43, 0.92) * W
+        start_y = rng.uniform(0.72, 0.98) * H
+        radius = rng.uniform(1.0, 2.8)
+        drift = rng.uniform(-58, 42)
+        rise = rng.uniform(180, 560)
+        duration = rng.uniform(7.0, 14.0)
+        delay = rng.uniform(0, 14)
+        sparks.append(
+            f'<circle cx="{start_x:.0f}" cy="{start_y:.0f}" r="{radius:.1f}" '
+            f'fill="{colors[index % len(colors)]}" opacity="0">'
+            f'<animate attributeName="opacity" values="0;0.9;0.45;0" '
+            f'keyTimes="0;0.14;0.65;1" dur="{duration:.1f}s" '
+            f'begin="-{delay:.1f}s" repeatCount="indefinite"/>'
+            f'<animateTransform attributeName="transform" type="translate" '
+            f'values="0 0;{drift:.0f} -{rise:.0f}" dur="{duration:.1f}s" '
+            f'begin="-{delay:.1f}s" repeatCount="indefinite"/>'
+            "</circle>"
+        )
+    return "".join(sparks)
+
+
+def build_svg() -> str:
+    uri = webp_uri(build_raster())
+    sparks = spark_markup()
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
+        f'width="{W}" height="{H}" role="img" aria-labelledby="title description">'
+        '<title id="title">A confrontation on a narrow bridge</title>'
+        '<desc id="description">A lone traveler faces a towering fire demon above a burning abyss.</desc>'
+        '<style>@media (prefers-reduced-motion: reduce){.motion{display:none}}</style>'
+        '<defs><radialGradient id="fire-spill" cx="50%" cy="50%" r="50%">'
+        '<stop offset="0" stop-color="#ff8b2a" stop-opacity="0.24"/>'
+        '<stop offset="0.48" stop-color="#e8531a" stop-opacity="0.08"/>'
+        '<stop offset="1" stop-color="#e8531a" stop-opacity="0"/>'
+        '</radialGradient></defs>'
+        '<g class="motion"><ellipse cx="1160" cy="326" rx="410" ry="314" fill="url(#fire-spill)">'
+        '<animate attributeName="opacity" values="0.72;1;0.8;0.94;0.72" dur="6.4s" '
+        'repeatCount="indefinite"/></ellipse></g>'
+        f'<image href="{uri}" x="0" y="0" width="{W}" height="{H}" image-rendering="pixelated"/>'
+        f'<g class="motion">{sparks}</g>'
+        '</svg>'
+    )
+
+
+with open(OUT, "w", encoding="utf-8") as file:
+    file.write(build_svg())
+
+print(f"wrote {OUT} ({os.path.getsize(OUT) // 1024} KB) {W}x{H}")
