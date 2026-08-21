@@ -39,7 +39,7 @@ BLOBS = [
 ]
 SPAN = ((0.02, 0.835), (1.02, 0.735), 0.062)   # the bridge, running up to the right
 BLAZE = (0.58, 0.36)                            # where the light comes from
-LO, HI = 0.045, 0.150                           # the lit/unlit boundary
+LO, HI = 0.085, 0.210                           # the lit/unlit boundary
 CONTRACT = (0.45, 0.80)                         # squeeze the soft tail off the edge
 
 
@@ -69,16 +69,26 @@ def shape_mask(h, w):
     # stopping on a straight cut
     taper = th * (0.20 + 0.80 * np.clip(np.sin(np.pi * t), 0, 1) ** 0.6)
     m = np.maximum(m, np.clip(1.0 - d / np.maximum(taper, 1e-4), 0, 1))
-    # nothing may touch the border of the source, or the painting's own edge
-    # becomes the cutout's edge and the straight line is back
-    m *= np.clip(u / 0.055, 0, 1) ** 0.8 * np.clip((1.0 - u) / 0.055, 0, 1) ** 0.8
-    m *= np.clip(v / 0.045, 0, 1) ** 0.8
-    # and the fire below falls away toward the foot of the frame
-    return m * np.clip((1.0 - v) / 0.14, 0, 1) ** 0.9
+    return m
 
 
-def compose(src):
-    rgb = np.asarray(src, np.float32) / 255.0
+def sink_shadows(rgb, colour, upto=0.17):
+    """Move the painting's darks onto the page's own black.
+
+    The cave in this art is a warm near-black; GitHub's dark is a cool one. Any
+    cave pixel the matte keeps therefore shows up as a grey patch, and a grey
+    patch with four sides is the cutout all over again. Repainting only the
+    darkest pixels in the page's colour makes what is kept and what is cut away
+    the same colour, so the join stops existing.
+    """
+    bg = np.array([int(colour[i:i + 2], 16) for i in (1, 3, 5)], np.float32) / 255.0
+    lum = rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32)
+    t = (np.clip(1.0 - lum / upto, 0, 1) ** 1.4)[..., None]
+    return rgb * (1 - t) + bg * t
+
+
+def compose(src, bg="#0d1117"):
+    rgb = sink_shadows(np.asarray(src, np.float32) / 255.0, bg)
     h, w = rgb.shape[:2]
 
     m = smooth((blur(shape_mask(h, w), 0.030 * min(h, w)) - 0.18) / 0.42)
@@ -88,13 +98,27 @@ def compose(src):
     key = smooth((blur(lum, 14) - LO) / (HI - LO))
     key = np.maximum(key, smooth((lum - 0.14) / 0.20))
     # Squeeze the long low-alpha tail off the edge. Left in, it puts a soft dark
-    # halo around everything, and a soft halo still reads as a panel.
+    # halo around everything, and a soft halo still reads as a panel. Then blur
+    # what is left: the squeeze alone leaves a hard rim, which reads as a sticker.
     alpha = smooth((np.clip(m * key, 0, 1) - CONTRACT[0]) / (CONTRACT[1] - CONTRACT[0]))
+    alpha = blur(alpha, 0.012 * min(h, w))
 
     ys, xs = np.nonzero(alpha > 0.02)
-    t, b, l, r = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
-    blaze = ((BLAZE[0] * w - l) / (r - l), (BLAZE[1] * h - t) / (b - t))
-    return rgb[t:b, l:r], alpha[t:b, l:r], blaze
+    pad = int(0.05 * min(h, w))
+    t, b = max(0, ys.min() - pad), min(h, ys.max() + 1 + pad)
+    l, r = max(0, xs.min() - pad), min(w, xs.max() + 1 + pad)
+    rgb, alpha = rgb[t:b, l:r], alpha[t:b, l:r]
+
+    # Nothing may reach the border of the plate, whatever the art was doing
+    # there. One straight edge and the cutout is back.
+    ch, cw = alpha.shape
+    y, x = np.mgrid[0:ch, 0:cw].astype(np.float32)
+    fade = max(24.0, 0.055 * min(ch, cw))
+    alpha *= (smooth(x / fade) * smooth((cw - 1 - x) / fade)
+              * smooth(y / fade) * smooth((ch - 1 - y) / fade))
+
+    blaze = ((BLAZE[0] * w - l) / cw, (BLAZE[1] * h - t) / ch)
+    return rgb, alpha, blaze
 
 
 def plate(rgb, alpha, colour):
@@ -190,10 +214,12 @@ def main():
     ap.add_argument("--name", default="banner.svg")
     ap.add_argument("--quality", type=int, default=88)
     ap.add_argument("--width", type=int, default=620)
+    ap.add_argument("--bg", default="#0d1117",
+                    help="the page colour the art's shadows are repainted in")
     ap.add_argument("--plate", help="flatten onto this colour instead of alpha")
     args = ap.parse_args()
 
-    rgb, alpha, blaze = compose(Image.open(args.art).convert("RGB"))
+    rgb, alpha, blaze = compose(Image.open(args.art).convert("RGB"), args.bg)
     if args.plate:
         rgb, alpha = plate(rgb, alpha, args.plate)
     h, w = alpha.shape
