@@ -75,25 +75,12 @@ def scene_layer(theme: str) -> Image.Image:
     if theme == "dark":
         alpha = edge * np.maximum(0.18 + atmosphere * 0.78, bridge * 0.84)
     else:
-        # Treat the light version like a charcoal print with living fire. A
-        # localized dark field gives the encounter enough mass on white while
-        # the soft edge mask keeps it from becoming a pasted-on rectangle.
-        dx = np.abs(np.diff(luminance, axis=1, prepend=luminance[:, :1]))
-        dy = np.abs(np.diff(luminance, axis=0, prepend=luminance[:1, :]))
-        ink = smoothstep((np.maximum(dx, dy) - 0.012) / 0.11)
-        dark_bridge = bridge * smoothstep((0.42 - luminance) / 0.34)
-        traveler_focus = np.exp(-(((x - 405) / 340) ** 2 + ((y - 390) / 235) ** 2))
-        demon_focus = np.exp(-(((x - 1260) / 440) ** 2 + ((y - 300) / 300) ** 2))
-        bridge_focus = bridge * smoothstep((x + 80) / 240) * smoothstep((W + 80 - x) / 240)
-        encounter_focus = smoothstep(
-            np.maximum.reduce((traveler_focus, demon_focus, bridge_focus * 0.9))
-        )
-        scene_body = encounter_focus * (0.82 + atmosphere * 0.16)
-        alpha = edge * np.maximum.reduce(
-            (scene_body, fire, detail * 0.96, ink * 0.98, dark_bridge * 0.98)
-        )
+        # Light mode needs a real dark stage, not isolated ink details floating
+        # on white. Keep the scene nearly opaque through its centre and let the
+        # existing edge mask dissolve the surface into GitHub's background.
+        alpha = edge * np.maximum(0.9 + atmosphere * 0.08, bridge * 0.98)
 
-        charcoal = rgb * np.array([0.52, 0.48, 0.46], dtype=np.float32)
+        charcoal = rgb * np.array([0.4, 0.37, 0.36], dtype=np.float32)
         fire_weight = smoothstep(fire)[:, :, None]
         output_rgb = charcoal * (1 - fire_weight) + rgb * fire_weight
 
