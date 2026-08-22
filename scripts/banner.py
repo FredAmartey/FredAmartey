@@ -70,25 +70,34 @@ def scene_layer(theme: str) -> Image.Image:
     bridge = np.exp(-((y - bridge_y) / 92) ** 2)
     atmosphere = np.maximum(detail, fire)
 
+    output_rgb = rgb
+
     if theme == "dark":
         alpha = edge * np.maximum(0.18 + atmosphere * 0.78, bridge * 0.84)
     else:
-        # On white, the dark-theme base opacity turns the whole scene into a
-        # pale grey wash. Keep the fire and bridge solid, then recover the
-        # architecture as crisp ink from local contrast instead.
+        # Treat the light version like a charcoal print with living fire. A
+        # localized dark field gives the encounter enough mass on white while
+        # the soft edge mask keeps it from becoming a pasted-on rectangle.
         dx = np.abs(np.diff(luminance, axis=1, prepend=luminance[:, :1]))
         dy = np.abs(np.diff(luminance, axis=0, prepend=luminance[:1, :]))
         ink = smoothstep((np.maximum(dx, dy) - 0.012) / 0.11)
         dark_bridge = bridge * smoothstep((0.42 - luminance) / 0.34)
         traveler_focus = np.exp(-(((x - 405) / 340) ** 2 + ((y - 390) / 235) ** 2))
         demon_focus = np.exp(-(((x - 1260) / 440) ** 2 + ((y - 300) / 300) ** 2))
-        encounter_focus = smoothstep(np.maximum(traveler_focus, demon_focus))
-        scene_body = encounter_focus * (0.62 + atmosphere * 0.36)
+        bridge_focus = bridge * smoothstep((x + 80) / 240) * smoothstep((W + 80 - x) / 240)
+        encounter_focus = smoothstep(
+            np.maximum.reduce((traveler_focus, demon_focus, bridge_focus * 0.9))
+        )
+        scene_body = encounter_focus * (0.82 + atmosphere * 0.16)
         alpha = edge * np.maximum.reduce(
-            (scene_body, fire * 0.98, detail * 0.9, ink * 0.92, dark_bridge * 0.9)
+            (scene_body, fire, detail * 0.96, ink * 0.98, dark_bridge * 0.98)
         )
 
-    rgba = np.dstack((rgb, np.clip(alpha, 0, 0.98)))
+        charcoal = rgb * np.array([0.52, 0.48, 0.46], dtype=np.float32)
+        fire_weight = smoothstep(fire)[:, :, None]
+        output_rgb = charcoal * (1 - fire_weight) + rgb * fire_weight
+
+    rgba = np.dstack((output_rgb, np.clip(alpha, 0, 0.98)))
     return Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
 
 
