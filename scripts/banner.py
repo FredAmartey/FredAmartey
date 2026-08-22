@@ -75,14 +75,27 @@ def scene_layer(theme: str) -> Image.Image:
     if theme == "dark":
         alpha = edge * np.maximum(0.18 + atmosphere * 0.78, bridge * 0.84)
     else:
-        # Light mode needs a real dark stage, not isolated ink details floating
-        # on white. Keep the scene nearly opaque through its centre and let the
-        # existing edge mask dissolve the surface into GitHub's background.
-        alpha = edge * np.maximum(0.9 + atmosphere * 0.08, bridge * 0.98)
+        # Lift the subjects, not the whole scene. The bridge follows the actual
+        # perspective line while soft character fields bring shadow detail back
+        # into both figures without flattening the surrounding architecture.
+        traveler_focus = np.exp(-(((x - 405) / 270) ** 2 + ((y - 390) / 210) ** 2))
+        demon_focus = np.exp(-(((x - 1260) / 390) ** 2 + ((y - 300) / 290) ** 2))
+        bridge_focus = smoothstep(bridge * 1.08)
+        subject_focus = smoothstep(
+            np.maximum.reduce((traveler_focus, demon_focus, bridge_focus * 0.92))
+        )
 
-        charcoal = rgb * np.array([0.4, 0.37, 0.36], dtype=np.float32)
+        stage_alpha = 0.8 + atmosphere * 0.16
+        alpha = edge * np.maximum.reduce(
+            (stage_alpha, subject_focus * 0.98, bridge * 0.98)
+        )
+
+        background_lift = np.power(rgb, 0.88)
+        subject_lift = np.power(rgb, 0.55)
+        lifted = background_lift * (1 - subject_focus[:, :, None])
+        lifted += subject_lift * subject_focus[:, :, None]
         fire_weight = smoothstep(fire)[:, :, None]
-        output_rgb = charcoal * (1 - fire_weight) + rgb * fire_weight
+        output_rgb = lifted * (1 - fire_weight) + rgb * fire_weight
 
     rgba = np.dstack((output_rgb, np.clip(alpha, 0, 0.98)))
     return Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
