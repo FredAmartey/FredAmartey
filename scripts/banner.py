@@ -26,7 +26,10 @@ W, H = 1600, 700
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART = os.path.join(ROOT, "art")
 SCENE_PATH = os.path.join(ART, "reading-encounter.png")
-OUT = os.path.join(ROOT, "banner.svg")
+OUTPUTS = {
+    "dark": os.path.join(ROOT, "banner.svg"),
+    "light": os.path.join(ROOT, "banner-light.svg"),
+}
 
 
 def smoothstep(value: np.ndarray) -> np.ndarray:
@@ -45,7 +48,7 @@ def cover(image: Image.Image) -> Image.Image:
     return resized.crop((left, top, left + W, top + H))
 
 
-def scene_layer() -> Image.Image:
+def scene_layer(theme: str) -> Image.Image:
     scene = cover(Image.open(SCENE_PATH).convert("RGB"))
     rgb = np.asarray(scene, dtype=np.float32) / 255
     y, x = np.mgrid[0:H, 0:W].astype(np.float32)
@@ -66,14 +69,31 @@ def scene_layer() -> Image.Image:
     bridge_y = 526 - 0.12 * x
     bridge = np.exp(-((y - bridge_y) / 92) ** 2)
     atmosphere = np.maximum(detail, fire)
-    alpha = edge * np.maximum(0.18 + atmosphere * 0.78, bridge * 0.84)
+
+    if theme == "dark":
+        alpha = edge * np.maximum(0.18 + atmosphere * 0.78, bridge * 0.84)
+    else:
+        # On white, the dark-theme base opacity turns the whole scene into a
+        # pale grey wash. Keep the fire and bridge solid, then recover the
+        # architecture as crisp ink from local contrast instead.
+        dx = np.abs(np.diff(luminance, axis=1, prepend=luminance[:, :1]))
+        dy = np.abs(np.diff(luminance, axis=0, prepend=luminance[:1, :]))
+        ink = smoothstep((np.maximum(dx, dy) - 0.012) / 0.11)
+        dark_bridge = bridge * smoothstep((0.42 - luminance) / 0.34)
+        traveler_focus = np.exp(-(((x - 405) / 340) ** 2 + ((y - 390) / 235) ** 2))
+        demon_focus = np.exp(-(((x - 1260) / 440) ** 2 + ((y - 300) / 300) ** 2))
+        encounter_focus = smoothstep(np.maximum(traveler_focus, demon_focus))
+        scene_body = encounter_focus * (0.62 + atmosphere * 0.36)
+        alpha = edge * np.maximum.reduce(
+            (scene_body, fire * 0.98, detail * 0.9, ink * 0.92, dark_bridge * 0.9)
+        )
 
     rgba = np.dstack((rgb, np.clip(alpha, 0, 0.98)))
     return Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
 
 
-def build_raster() -> Image.Image:
-    return scene_layer()
+def build_raster(theme: str) -> Image.Image:
+    return scene_layer(theme)
 
 
 def webp_uri(image: Image.Image) -> str:
@@ -108,8 +128,8 @@ def spark_markup() -> str:
     return "".join(sparks)
 
 
-def build_svg() -> str:
-    uri = webp_uri(build_raster())
+def build_svg(theme: str) -> str:
+    uri = webp_uri(build_raster(theme))
     sparks = spark_markup()
     return (
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
@@ -131,7 +151,7 @@ def build_svg() -> str:
     )
 
 
-with open(OUT, "w", encoding="utf-8") as file:
-    file.write(build_svg())
-
-print(f"wrote {OUT} ({os.path.getsize(OUT) // 1024} KB) {W}x{H}")
+for theme, output in OUTPUTS.items():
+    with open(output, "w", encoding="utf-8") as file:
+        file.write(build_svg(theme))
+    print(f"wrote {output} ({os.path.getsize(output) // 1024} KB) {W}x{H}")
