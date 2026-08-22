@@ -18,31 +18,20 @@ import io
 import os
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image
 
 
 W, H = 1600, 700
-TRAVELER_HEIGHT = 176
-DEMON_HEIGHT = 470
-TRAVELER_X, TRAVELER_GROUND = 370, 486
-DEMON_X, DEMON_GROUND = 1160, 426
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART = os.path.join(ROOT, "art")
-SCENE_PATH = os.path.join(ART, "bridge-background.png")
-TRAVELER_PATH = os.path.join(ART, "traveler.png")
-DEMON_PATH = os.path.join(ART, "fire-demon.png")
+SCENE_PATH = os.path.join(ART, "reading-encounter.png")
 OUT = os.path.join(ROOT, "banner.svg")
 
 
 def smoothstep(value: np.ndarray) -> np.ndarray:
     value = np.clip(value, 0, 1)
     return value * value * (3 - 2 * value)
-
-
-def trim(image: Image.Image) -> Image.Image:
-    box = image.getbbox()
-    return image.crop(box) if box else image
 
 
 def cover(image: Image.Image) -> Image.Image:
@@ -83,52 +72,8 @@ def scene_layer() -> Image.Image:
     return Image.fromarray((rgba * 255).astype(np.uint8), "RGBA")
 
 
-def ground_row(image: Image.Image) -> int:
-    alpha = np.asarray(image)[:, :, 3]
-    solid = (alpha > 180).sum(axis=1)
-    rows = np.nonzero(solid >= max(2, int(image.width * 0.012)))[0]
-    return int(rows.max()) + 1 if len(rows) else image.height
-
-
-def foot_anchor(image: Image.Image) -> float:
-    alpha = np.asarray(image)[:, :, 3]
-    ground = ground_row(image)
-    depth = max(2, round(image.height * 0.035))
-    sole = (alpha[max(0, ground - depth) : ground] > 180).any(axis=0)
-    columns = np.nonzero(sole)[0]
-    return float(columns.mean() / image.width) if len(columns) else 0.5
-
-
-def place(image: Image.Image, height: int, x: int, ground: int) -> tuple[Image.Image, int, int]:
-    scale = height / ground_row(image)
-    size = (round(image.width * scale), round(image.height * scale))
-    resized = image.resize(size, Image.Resampling.LANCZOS)
-    left = round(x - size[0] * foot_anchor(image))
-    top = round(ground - height)
-    return resized, left, top
-
-
-def shadow(canvas: Image.Image, x: int, y: int, width: int, opacity: int) -> None:
-    layer = Image.new("RGBA", canvas.size)
-    draw = ImageDraw.Draw(layer)
-    draw.ellipse((x - width, y - 11, x + width, y + 9), fill=(0, 0, 0, opacity))
-    layer = layer.filter(ImageFilter.GaussianBlur(9))
-    canvas.alpha_composite(layer)
-
-
 def build_raster() -> Image.Image:
-    canvas = scene_layer()
-    traveler = trim(Image.open(TRAVELER_PATH).convert("RGBA"))
-    demon = trim(Image.open(DEMON_PATH).convert("RGBA"))
-
-    traveler, tx, ty = place(traveler, TRAVELER_HEIGHT, TRAVELER_X, TRAVELER_GROUND)
-    demon, dx, dy = place(demon, DEMON_HEIGHT, DEMON_X, DEMON_GROUND)
-
-    shadow(canvas, TRAVELER_X, TRAVELER_GROUND, 58, 108)
-    shadow(canvas, DEMON_X, DEMON_GROUND, 172, 146)
-    canvas.alpha_composite(demon, (dx, dy))
-    canvas.alpha_composite(traveler, (tx, ty))
-    return canvas
+    return scene_layer()
 
 
 def webp_uri(image: Image.Image) -> str:
@@ -170,14 +115,14 @@ def build_svg() -> str:
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
         f'width="{W}" height="{H}" role="img" aria-labelledby="title description">'
         '<title id="title">A confrontation on a narrow bridge</title>'
-        '<desc id="description">A lone traveler faces a towering fire demon above a burning abyss.</desc>'
+        '<desc id="description">A lone traveler faces a towering fire demon reading a book above a burning abyss.</desc>'
         '<style>@media (prefers-reduced-motion: reduce){.motion{display:none}}</style>'
         '<defs><radialGradient id="fire-spill" cx="50%" cy="50%" r="50%">'
         '<stop offset="0" stop-color="#ff8b2a" stop-opacity="0.24"/>'
         '<stop offset="0.48" stop-color="#e8531a" stop-opacity="0.08"/>'
         '<stop offset="1" stop-color="#e8531a" stop-opacity="0"/>'
         '</radialGradient></defs>'
-        '<g class="motion"><ellipse cx="1160" cy="326" rx="410" ry="314" fill="url(#fire-spill)">'
+        '<g class="motion"><ellipse cx="1250" cy="300" rx="430" ry="320" fill="url(#fire-spill)">'
         '<animate attributeName="opacity" values="0.72;1;0.8;0.94;0.72" dur="6.4s" '
         'repeatCount="indefinite"/></ellipse></g>'
         f'<image href="{uri}" x="0" y="0" width="{W}" height="{H}" image-rendering="pixelated"/>'
