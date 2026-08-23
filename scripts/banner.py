@@ -85,13 +85,13 @@ def scene_layer(theme: str) -> Image.Image:
             np.maximum.reduce((traveler_focus, demon_focus, bridge_focus * 0.92))
         )
 
-        stage_alpha = 0.8 + atmosphere * 0.16
+        stage_alpha = 0.88 + atmosphere * 0.1
         alpha = edge * np.maximum.reduce(
             (stage_alpha, subject_focus * 0.98, bridge * 0.98)
         )
 
-        background_lift = np.power(rgb, 0.88)
-        subject_lift = np.power(rgb, 0.55)
+        background_lift = np.power(rgb, 1.08)
+        subject_lift = np.power(rgb, 0.72)
         lifted = background_lift * (1 - subject_focus[:, :, None])
         lifted += subject_lift * subject_focus[:, :, None]
         fire_weight = smoothstep(fire)[:, :, None]
