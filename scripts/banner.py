@@ -76,7 +76,7 @@ def scene_layer(theme: str) -> Image.Image:
         alpha = edge * np.maximum(0.18 + atmosphere * 0.78, bridge * 0.84)
     else:
         # Lift the subjects, not the whole scene. The bridge follows the actual
-        # perspective line while soft character fields bring shadow detail back
+        # perspective line, while soft character fields bring shadow detail back
         # into both figures without flattening the surrounding architecture.
         traveler_focus = np.exp(-(((x - 405) / 270) ** 2 + ((y - 390) / 210) ** 2))
         demon_focus = np.exp(-(((x - 1260) / 390) ** 2 + ((y - 300) / 290) ** 2))
